@@ -14,8 +14,8 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.5.1"
-__icon__ = "exteraPlugins/1"
+__version__ = "1.5.2"
+__icon__ = "kimomimi_1/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
 
