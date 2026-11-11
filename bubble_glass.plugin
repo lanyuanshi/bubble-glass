@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载、音乐播放器"
 __author__ = "蓝鸢"
-__version__ = "1.9.2"
+__version__ = "1.9.3"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1908,18 +1908,13 @@ class BubbleGlassPlugin(BasePlugin):
             if ctx is None:
                 return
             from android_utils import OnClickListener
-            res_id = 0
-            for icon_name in ("baseline_music_note_24", "search_music_filled", "ic_ab_other"):
-                res_id = ctx.getResources().getIdentifier(icon_name, "drawable", ctx.getPackageName())
-                if res_id != 0:
-                    break
             menu = ab.createMenu()
             index = self._music_menu_index(menu)
-            item = menu.addItemAt(index, 0x4D555349, res_id, None, 0, None, 0, None, None)
+            item = menu.addItemAt(index, 0x4D555349, 0, "音乐", 0, None, 0, None, None)
             item.setContentDescription("音乐播放器")
             item.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_open)))
             st["entries"].add(ident)
-            self._log_info("music entry added idx=%s res=%s" % (index, res_id))
+            self._log_info("music entry added idx=%s" % index)
         except Exception as e:
             self._log_error("music_entry: %s" % e)
 
@@ -1981,7 +1976,8 @@ class BubbleGlassPlugin(BasePlugin):
                 window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
                                 WindowManager.LayoutParams.FLAG_FULLSCREEN)
             dialog.setCancelable(True)
-            dialog.setOnDismissListener(lambda d: self._player_on_dismiss())
+            from android_utils import _listener as _dlg_listener
+            dialog.setOnDismissListener(_dlg_listener("android.content.DialogInterface$OnDismissListener", "onDismiss", lambda d: self._player_on_dismiss(), None))
             dialog.show()
             self._music_state["dialog"] = dialog
             self._music_state["view"] = view
