@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载、音乐播放器"
 __author__ = "蓝鸢"
-__version__ = "1.6.1"
+__version__ = "1.6.2"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1845,6 +1845,7 @@ class BubbleGlassPlugin(BasePlugin):
         try:
             activity = param.thisObject
             view = param.getResult()
+            self._log_info("music: chat created on=%s view=%s" % (self._music_on(), view is not None))
             if activity is None or view is None or not self._music_on():
                 return
             self._ui(lambda: self._music_attach(activity))
@@ -1892,9 +1893,11 @@ class BubbleGlassPlugin(BasePlugin):
             if st["view"] is not None:
                 return
             content = self._music_content_view(activity)
+            self._log_info("music: attach content=%s" % (content is not None))
             if content is None:
                 return
             bar = self._music_make_bar(st)
+            self._log_info("music: bar=%s" % (bar is not None))
             if bar is None:
                 return
             bar.setLayoutParams(self._music_layout_params(bar))
@@ -1903,8 +1906,13 @@ class BubbleGlassPlugin(BasePlugin):
             self._music_refresh(st)
             self._music_start_loop(st)
             self._log_info("music bar attached")
-        except Exception:
-            self._report("music_attach")
+        except Exception as e:
+            self._log_error("music_attach: %s" % e)
+            try:
+                import traceback
+                self._log_error(traceback.format_exc())
+            except Exception:
+                pass
 
     def _music_remove(self, activity):
         try:
