@@ -12,9 +12,9 @@ except ImportError:
 
 __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
-__description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
+__description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载、音乐播放器"
 __author__ = "蓝鸢"
-__version__ = "1.5.4"
+__version__ = "1.6.0"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -63,6 +63,7 @@ DEFAULTS = {
     "settings_mode": 0,
     "settings_transparency": 60,
     "allow_noforwards": False,
+    "music_player": False,
 }
 
 PRESETS = {
@@ -207,9 +208,12 @@ class BubbleGlassPlugin(BasePlugin):
         self._cg_init()
         self._hook_contacts()
         self._hook_noforwards()
+        self._music_init()
+        self._hook_music()
 
     def on_plugin_unload(self):
         self._cg_unload()
+        self._music_unload()
         self._bd_shader = None
         self._bg_view = None
         self._cell_state = {}
@@ -252,6 +256,7 @@ class BubbleGlassPlugin(BasePlugin):
                 "density": max(0.0, min(100.0, float(cfg["density"]))),
                 "outline": bool(cfg["outline"]),
                 "allow_noforwards": bool(cfg["allow_noforwards"]),
+                "music_player": bool(cfg["music_player"]),
             }
             for page in PAGE_INFO:
                 mode = int(cfg[page + "_mode"])
@@ -313,7 +318,7 @@ class BubbleGlassPlugin(BasePlugin):
             Divider(text="模糊取自当前聊天壁纸。改完设置后返回聊天即可看到效果。"),
             Text(text="页面壁纸与透明度", subtext="主页 / 联系人 / 设置 各自的壁纸和透明度",
                  icon="msg_background", accent=True, create_sub_fragment=self._page_sub_rows),
-        ] + self._cg_rows() + self._ar_rows() + self._nf_rows()
+        ] + self._cg_rows() + self._ar_rows() + self._nf_rows() + self._music_rows()
 
     def _page_sub_rows(self):
         rows = []
@@ -1802,3 +1807,330 @@ class BubbleGlassPlugin(BasePlugin):
         base.setScale(width / float(bw), height / float(bh))
         self._bd_shader = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
         self._bd_base = base
+
+    # ---------- music player ----------
+
+    def _music_init(self):
+        self._music_chats = {}
+        self._music_handler = None
+        self._music_runnable = None
+
+    def _music_unload(self):
+        for activity in list(self._music_chats.keys()):
+            st = self._music_chats.get(activity)
+            if st is not None:
+                self._music_remove(st["activity"])
+        self._music_chats = {}
+
+    def _hook_music(self):
+        self._try_hook("org.telegram.ui.ChatActivity", "createView",
+                       _Hook(after=self._on_chat_created), quiet=True)
+        self._try_hook("org.telegram.ui.ChatActivity", "onFragmentDestroy",
+                       _Hook(before=self._on_chat_destroyed), quiet=True)
+
+    def _music_rows(self):
+        return [
+            Header(text="音乐播放器"),
+            Switch(key="music_player", text="悬浮播放器", default=DEFAULTS["music_player"],
+                   icon="msg_music",
+                   subtext="在聊天窗口底部显示悬浮播放条，左右滑动切歌",
+                   on_change=lambda v: self._on_change("music_player", v)),
+            Divider(text="播放当前聊天里的音频/语音消息，带系统通知栏控制。"),
+        ]
+
+    def _music_on(self):
+        return bool(self._cfg.get("music_player"))
+
+    def _on_chat_created(self, param):
+        try:
+            activity = param.thisObject
+            view = param.getResult()
+            if activity is None or view is None or not self._music_on():
+                return
+            self._ui(lambda: self._music_attach(activity))
+        except Exception:
+            self._report("music_created")
+
+    def _on_chat_destroyed(self, param):
+        try:
+            activity = param.thisObject
+            self._music_remove(activity)
+        except Exception:
+            self._report("music_destroyed")
+
+    def _music_collect(self, activity):
+        from org.telegram.messenger import MessageObject
+        msgs = []
+        try:
+            raw = activity.messages
+            size = raw.size() if hasattr(raw, "size") else len(raw)
+            for i in range(size):
+                msg = raw.get(i) if hasattr(raw, "get") else raw[i]
+                if msg is None:
+                    continue
+                try:
+                    if msg.isVoice() or msg.isMusic():
+                        msgs.append(msg)
+                except Exception:
+                    pass
+        except Exception:
+            self._report("music_collect")
+        return msgs
+
+    def _music_state(self, activity):
+        key = self._ident(activity)
+        st = self._music_chats.get(key)
+        if st is None:
+            st = {"activity": activity, "view": None, "playlist": [], "index": -1,
+                  "handler": None, "runnable": None, "down": None, "start_x": 0}
+            self._music_chats[key] = st
+        return st
+
+    def _music_attach(self, activity):
+        try:
+            st = self._music_state(activity)
+            if st["view"] is not None:
+                return
+            content = self._music_content_view(activity)
+            if content is None:
+                return
+            bar = self._music_make_bar(st)
+            bar.setLayoutParams(self._music_layout_params(bar))
+            content.addView(bar)
+            st["view"] = bar
+            self._music_refresh(st)
+            self._music_start_loop(st)
+            self._log_info("music bar attached")
+        except Exception:
+            self._report("music_attach")
+
+    def _music_remove(self, activity):
+        try:
+            st = self._music_chats.pop(self._ident(activity), None)
+            if st is None:
+                return
+            view = st.get("view")
+            if view is not None:
+                try:
+                    view.getParent().removeView(view)
+                except Exception:
+                    pass
+            handler = st.get("handler")
+            runnable = st.get("runnable")
+            if handler is not None and runnable is not None:
+                try:
+                    handler.removeCallbacks(runnable)
+                except Exception:
+                    pass
+        except Exception:
+            self._report("music_remove")
+
+    def _music_content_view(self, activity):
+        try:
+            field = activity.getClass().getDeclaredField("contentView")
+            field.setAccessible(True)
+            return field.get(activity)
+        except Exception:
+            try:
+                return activity.getContentView()
+            except Exception:
+                return None
+
+    def _music_make_bar(self, st):
+        from android.text import TextUtils
+        from android.view import Gravity
+        from android.widget import Button, LinearLayout, TextView
+        from org.telegram.messenger import AndroidUtilities
+
+        ctx = st["activity"]
+        bar = LinearLayout(ctx)
+        bar.setOrientation(LinearLayout.HORIZONTAL)
+        bar.setGravity(Gravity.CENTER_VERTICAL)
+        bar.setPadding(AndroidUtilities.dp(8), AndroidUtilities.dp(4),
+                       AndroidUtilities.dp(4), AndroidUtilities.dp(4))
+        try:
+            bar.setBackgroundColor(0xCC1A1C22)
+        except Exception:
+            pass
+
+        def btn(text, on_click):
+            b = Button(ctx)
+            b.setText(text)
+            b.setTextSize(16)
+            b.setMinWidth(0)
+            b.setMinimumWidth(0)
+            b.setPadding(AndroidUtilities.dp(6), 0, AndroidUtilities.dp(6), 0)
+            b.setOnClickListener(lambda *_: on_click())
+            return b
+
+        st["btn_prev"] = btn("⏮", lambda: self._music_step(st, -1))
+        st["btn_play"] = btn("▶", self._music_toggle)
+        st["btn_next"] = btn("⏭", lambda: self._music_step(st, 1))
+        st["btn_close"] = btn("✕", lambda: self._music_hide(st))
+
+        title = TextView(ctx)
+        title.setText("音乐播放器")
+        title.setTextColor(0xFFFFFFFF)
+        title.setTextSize(13)
+        title.setSingleLine(True)
+        title.setEllipsize(TextUtils.TruncateAt.END)
+        lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
+        title.setLayoutParams(lp)
+        st["title"] = title
+
+        for v in (st["btn_prev"], st["btn_play"], title, st["btn_next"], st["btn_close"]):
+            bar.addView(v)
+
+        title.setOnTouchListener(lambda v, ev: self._music_on_touch(st, v, ev))
+        return bar
+
+    def _music_on_touch(self, st, view, ev):
+        from android.view import MotionEvent
+        try:
+            action = ev.getAction()
+            if action == MotionEvent.ACTION_DOWN:
+                st["down"] = True
+                st["start_x"] = ev.getX()
+                return True
+            if action == MotionEvent.ACTION_MOVE:
+                return True
+            if action == MotionEvent.ACTION_UP or action == MotionEvent.ACTION_CANCEL:
+                if st.get("down"):
+                    dx = ev.getX() - st.get("start_x", 0)
+                    if dx > 80:
+                        self._music_step(st, -1)
+                    elif dx < -80:
+                        self._music_step(st, 1)
+                st["down"] = False
+                return True
+        except Exception:
+            self._report("music_touch")
+        return False
+
+    def _music_layout_params(self, bar):
+        from android.view import Gravity
+        from android.widget import FrameLayout
+        from org.telegram.messenger import AndroidUtilities
+        lp = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT,
+                                      AndroidUtilities.dp(48), Gravity.BOTTOM)
+        lp.setMargins(0, 0, 0, AndroidUtilities.dp(8))
+        return lp
+
+    def _music_hide(self, st):
+        try:
+            view = st.get("view")
+            if view is not None and view.getParent() is not None:
+                view.getParent().removeView(view)
+            st["view"] = None
+        except Exception:
+            self._report("music_hide")
+
+    def _music_title(self, msg):
+        try:
+            t = msg.getMusicTitle()
+            if t:
+                return t
+        except Exception:
+            pass
+        try:
+            return msg.messageOwner.message or "音频"
+        except Exception:
+            return "音频"
+
+    def _music_refresh(self, st):
+        try:
+            from org.telegram.messenger import MediaController
+            mc = MediaController.getInstance()
+            current = mc.getPlayingMessageObject()
+            playing = current is not None and not mc.isMessagePaused()
+            title = self._music_title(current) if current is not None else "未在播放"
+            st["title"].setText(title)
+            st["btn_play"].setText("⏸" if playing else "▶")
+        except Exception:
+            self._report("music_refresh")
+
+    def _music_start_loop(self, st):
+        try:
+            from android.os import Handler, Looper
+            if st.get("handler") is None:
+                st["handler"] = Handler(Looper.getMainLooper())
+            runnable = st.get("runnable")
+            if runnable is None:
+                def loop():
+                    try:
+                        self._music_refresh(st)
+                    except Exception:
+                        pass
+                    h = st.get("handler")
+                    if h is not None and st.get("view") is not None:
+                        h.postDelayed(loop, 500)
+                runnable = loop
+                st["runnable"] = runnable
+            st["handler"].removeCallbacks(runnable)
+            st["handler"].postDelayed(runnable, 500)
+        except Exception:
+            self._report("music_loop")
+
+    def _music_ensure_playlist(self, st):
+        activity = st["activity"]
+        msgs = self._music_collect(activity)
+        st["playlist"] = msgs
+        idx = -1
+        try:
+            from org.telegram.messenger import MediaController
+            current = MediaController.getInstance().getPlayingMessageObject()
+            if current is not None:
+                cur_id = current.getId()
+                for i, m in enumerate(msgs):
+                    if m.getId() == cur_id:
+                        idx = i
+                        break
+        except Exception:
+            pass
+        st["index"] = idx
+
+    def _music_step(self, st, delta):
+        try:
+            self._music_ensure_playlist(st)
+            msgs = st["playlist"]
+            if not msgs:
+                self._music_refresh(st)
+                return
+            idx = st.get("index", -1)
+            if idx < 0:
+                idx = 0
+            idx = (idx + delta) % len(msgs)
+            st["index"] = idx
+            self._music_play(st, msgs[idx])
+        except Exception:
+            self._report("music_step")
+
+    def _music_play(self, st, msg):
+        try:
+            from org.telegram.messenger import MediaController
+            mc = MediaController.getInstance()
+            mc.playMessage(msg)
+            self._music_refresh(st)
+        except Exception:
+            self._report("music_play")
+
+    def _music_toggle(self):
+        try:
+            from org.telegram.messenger import MediaController
+            mc = MediaController.getInstance()
+            current = mc.getPlayingMessageObject()
+            if current is None:
+                # pick the most recent chat's playlist
+                for st in self._music_chats.values():
+                    self._music_ensure_playlist(st)
+                    msgs = st["playlist"]
+                    if msgs:
+                        self._music_play(st, msgs[-1])
+                        return
+                return
+            if mc.isMessagePaused():
+                mc.playMessage(current)
+            else:
+                mc.pauseMessage(current)
+        except Exception:
+            self._report("music_toggle")
