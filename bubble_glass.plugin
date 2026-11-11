@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载、音乐播放器"
 __author__ = "蓝鸢"
-__version__ = "1.9.1"
+__version__ = "1.9.2"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1942,7 +1942,9 @@ class BubbleGlassPlugin(BasePlugin):
 
     def _player_open(self):
         try:
+            self._log_info("player_open start state=%s" % (self._music_state is not None))
             if self._music_state.get("dialog") is not None:
+                self._log_info("player_open: already open")
                 return
             from android.app import Dialog
             from android.view import Window
@@ -1961,13 +1963,16 @@ class BubbleGlassPlugin(BasePlugin):
                 from org.telegram.ui import LaunchActivity
                 ctx = LaunchActivity.instance
             if ctx is None:
+                self._log_error("player_open: no context")
                 return
+            self._log_info("player_open ctx=%s" % type(ctx).__name__)
             dialog = Dialog(ctx)
             try:
                 dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
             except Exception:
                 pass
             view = self._player_make_view(dialog, ctx)
+            self._log_info("player_open view=%s" % (view is not None))
             dialog.setContentView(view)
             window = dialog.getWindow()
             if window is not None:
@@ -1984,7 +1989,11 @@ class BubbleGlassPlugin(BasePlugin):
             self._player_start_loop()
             self._log_info("player opened")
         except Exception as e:
-            self._log_error("player_open: %s" % e)
+            try:
+                import traceback
+                self._log_error("player_open: %s\n%s" % (e, traceback.format_exc()))
+            except Exception:
+                self._log_error("player_open: %s" % e)
 
     def _player_on_dismiss(self):
         st = self._music_state
