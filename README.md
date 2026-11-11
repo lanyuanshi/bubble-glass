@@ -1,6 +1,6 @@
-# Bubble Glass（泡泡玻璃）
+# Frost Evening Verse（霜晚辞）
 
-exteraless / exteraGram 的 Python 插件（Chaquopy）：给聊天气泡、主页、联系人页、设置页加上「玻璃」质感——透明度、毛玻璃模糊、浓度调节，晴空/夜幕风格，以及页面独立壁纸；联系人页还支持分组、折叠、隐藏与排序。
+exteraless / exteraGram 的 Python 插件（Chaquopy）：给聊天气泡、主页、联系人页、设置页加上「玻璃」质感——透明度、毛玻璃模糊、浓度调节，晴空/夜幕风格，以及页面独立壁纸；联系人页还支持分组、折叠、隐藏与排序；另带防撤回，撤回的消息保留并加标记。
 
 ## 功能
 
@@ -23,6 +23,11 @@ exteraless / exteraGram 的 Python 插件（Chaquopy）：给聊天气泡、主�
 - 长按联系人：移到分类 / 新建分类 / 隐藏此人 / 移出分类
 - 「已隐藏」分组可选显示，一键展开全部
 
+### 防撤回
+- 被撤回的消息保留在聊天里，时间旁显示标记（可自定义标记文字）
+- 可选是否包含机器人消息
+- 基于客户端（exteraless / NagramX）的「保存已删除消息」能力实现：消息内容保留，时间旁显示标记
+
 ## 安装
 
 1. 在 exteraless 中打开 `bubble_glass.plugin` 安装（首次会要求授予 **hooks** 钩子权限；壁纸功能还需要 **intents**、**files** 权限）
@@ -33,6 +38,7 @@ exteraless / exteraGram 的 Python 插件（Chaquopy）：给聊天气泡、主�
 
 - 主要针对 exteraless 13.x（beta15 及之后）开发
 - 缺失的类/方法会自动跳过并记日志，不会导致安装失败
+- 防撤回依赖客户端内置的「保存已删除消息」能力；标记显示在消息时间旁
 - 插件日志标签：`plugin.bubble_glass`
 
 ## 开发

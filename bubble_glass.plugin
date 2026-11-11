@@ -11,10 +11,10 @@ except ImportError:
     Slider = None
 
 __id__ = "bubble_glass"
-__name__ = "气泡玻璃"
-__description__ = "聊天气泡透明度 / 模糊 / 浓度可调，内置「晴空」「夜幕」两种玻璃风格；主页 / 联系人 / 设置页各自的壁纸与透明度"
+__name__ = "Frost Evening Verse（霜晚辞）"
+__description__ = "聊天气泡透明度 / 模糊 / 浓度可调，内置「晴空」「夜幕」两种玻璃风格；主页 / 联系人 / 设置页各自的壁纸与透明度；防撤回并标记被撤回的消息"
 __author__ = "蓝鸢"
-__version__ = "1.3.2"
+__version__ = "1.4.0"
 __icon__ = "exteraPlugins/1"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -185,6 +185,7 @@ class BubbleGlassPlugin(BasePlugin):
         self._bar_classes = set()
         self._search_bg = None
         self._reload_cfg()
+        self._ar_init()
 
         try:
             drawable_cls = _java_class("org.telegram.ui.ActionBar.MessageDrawable")
@@ -289,7 +290,7 @@ class BubbleGlassPlugin(BasePlugin):
 
     def create_settings(self):
         return [
-            Header(text="气泡玻璃"),
+            Header(text="Frost Evening Verse（霜晚辞）"),
             Switch(key="enabled", text="启用", default=DEFAULTS["enabled"], icon="msg_customize",
                    on_change=lambda v: self._on_change("enabled", v)),
             Selector(key="style", text="风格", default=DEFAULTS["style"], items=STYLE_ITEMS,
@@ -306,7 +307,7 @@ class BubbleGlassPlugin(BasePlugin):
             Text(text="夜幕", subtext="深色低调的暗色玻璃", icon="msg_brightness_low",
                  on_click=lambda *_: self._apply_preset(STYLE_NIGHT)),
             Divider(text="模糊取自当前聊天壁纸。改完设置后返回聊天即可看到效果。"),
-        ] + [row for page, _, _, _ in PAGES for row in self._page_rows(page)] + self._cg_rows()
+        ] + self._ar_rows() + [row for page, _, _, _ in PAGES for row in self._page_rows(page)] + self._cg_rows()
 
     def _page_rows(self, page):
         label = PAGE_INFO[page][1]
@@ -319,6 +320,90 @@ class BubbleGlassPlugin(BasePlugin):
             self._slider_row(page + "_transparency"),
             Divider(text=PAGE_HINTS[page]),
         ]
+
+    # ---------- anti-recall ----------
+
+    def _ar_rows(self):
+        return [
+            Header(text="防撤回"),
+            Switch(key="anti_recall", text="防撤回", default=self._ar_enabled(), icon="msg_delete",
+                   subtext="被撤回的消息保留在聊天里并加标记，不再直接消失",
+                   on_change=lambda v: self._ar_apply(v)),
+            Switch(key="anti_recall_bots", text="包括机器人消息", default=self._ar_bots(), icon="msg_users",
+                   subtext="机器人发的消息被撤回时也保留",
+                   on_change=lambda v: self._ar_apply_bots(v)),
+            Input(key="anti_recall_mark", text="撤回标记", default=self._ar_mark(), icon="msg_edit",
+                  subtext="显示在被撤回消息的时间旁，留空用客户端默认",
+                  on_change=lambda v: self._ar_apply_mark(v)),
+            Divider(text="基于客户端的「保存已删除消息」能力：消息内容保留，时间旁显示标记。"),
+        ]
+
+    @staticmethod
+    def _naconfig(getter):
+        # NaConfig (NagramX) is a Kotlin object; its Java getter returns the ConfigItem.
+        try:
+            from xyz.nextalone.nagram import NaConfig
+            return getattr(NaConfig.INSTANCE, getter)()
+        except Exception:
+            return None
+
+    def _ar_read_bool(self, getter):
+        item = self._naconfig(getter)
+        try:
+            return bool(item.Bool()) if item is not None else False
+        except Exception:
+            return False
+
+    def _ar_enabled(self):
+        return self._ar_read_bool("getEnableSaveDeletedMessages")
+
+    def _ar_bots(self):
+        return self._ar_read_bool("getSaveDeletedMessageForBotUser")
+
+    def _ar_mark(self):
+        item = self._naconfig("getCustomDeletedMark")
+        try:
+            return str(item.String()) if item is not None else ""
+        except Exception:
+            return ""
+
+    def _ar_apply(self, on):
+        item = self._naconfig("getEnableSaveDeletedMessages")
+        if item is not None:
+            try:
+                item.setConfigBool(bool(on))
+            except Exception:
+                self._report("anti_recall")
+
+    def _ar_apply_bots(self, on):
+        item = self._naconfig("getSaveDeletedMessageForBotUser")
+        if item is not None:
+            try:
+                item.setConfigBool(bool(on))
+            except Exception:
+                self._report("anti_recall_bots")
+
+    def _ar_apply_mark(self, mark):
+        item = self._naconfig("getCustomDeletedMark")
+        if item is not None:
+            try:
+                item.setConfigString("" if mark is None else str(mark))
+            except Exception:
+                self._report("anti_recall_mark")
+
+    def _ar_init(self):
+        # Only touch the client's own config for values the user actually set in
+        # this plugin, so we never clobber exteraless' experimental settings.
+        try:
+            for key, apply in (("anti_recall", self._ar_apply), ("anti_recall_bots", self._ar_apply_bots)):
+                value = self.get_setting(key, None)
+                if value is not None:
+                    apply(self._cg_on(value))
+            mark = self.get_setting("anti_recall_mark", None)
+            if mark is not None:
+                self._ar_apply_mark(mark)
+        except Exception:
+            self._report("anti_recall_init")
 
     # ---------- page wallpapers (home / contacts / settings) ----------
 
