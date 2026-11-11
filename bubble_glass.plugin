@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载、音乐播放器"
 __author__ = "蓝鸢"
-__version__ = "1.6.0"
+__version__ = "1.6.1"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1895,6 +1895,8 @@ class BubbleGlassPlugin(BasePlugin):
             if content is None:
                 return
             bar = self._music_make_bar(st)
+            if bar is None:
+                return
             bar.setLayoutParams(self._music_layout_params(bar))
             content.addView(bar)
             st["view"] = bar
@@ -1942,7 +1944,17 @@ class BubbleGlassPlugin(BasePlugin):
         from android.widget import Button, LinearLayout, TextView
         from org.telegram.messenger import AndroidUtilities
 
-        ctx = st["activity"]
+        activity = st["activity"]
+        ctx = None
+        for getter in ("getParentActivity", "getContext", "getActivity"):
+            try:
+                ctx = getattr(activity, getter)()
+                if ctx is not None:
+                    break
+            except Exception:
+                pass
+        if ctx is None:
+            return None
         bar = LinearLayout(ctx)
         bar.setOrientation(LinearLayout.HORIZONTAL)
         bar.setGravity(Gravity.CENTER_VERTICAL)
