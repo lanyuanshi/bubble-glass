@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载、音乐播放器"
 __author__ = "蓝鸢"
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1808,41 +1808,34 @@ class BubbleGlassPlugin(BasePlugin):
         self._bd_shader = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
         self._bd_base = base
 
-    # ---------- music player (floating disc) ----------
+    # ---------- music player (full-screen page) ----------
 
     def _music_init(self):
-        self._music_chats = {}
-        self._music_current = None
-        self._music_current_id = None
-        self._music_disc = None
-        self._music_hidden = False
+        self._music_state = {"dialog": None, "view": None, "handler": None,
+                             "runnable": None, "chats": {}, "current": None,
+                             "current_id": None, "entries": set(),
+                             "lyrics": [], "lyric_idx": -1}
 
     def _music_unload(self):
-        st = self._music_disc
-        if st is not None:
-            self._music_disc_remove(st)
-        self._music_disc = None
-        self._music_chats = {}
-        self._music_current = None
-        self._music_current_id = None
+        self._music_close_player()
+        self._music_state = None
 
     def _hook_music(self):
         self._try_hook("org.telegram.ui.ChatActivity", "createView",
                        _Hook(after=self._on_chat_created), quiet=True)
         self._try_hook("org.telegram.ui.ChatActivity", "onFragmentDestroy",
                        _Hook(before=self._on_chat_destroyed), quiet=True)
-        self._try_hook("org.telegram.ui.LaunchActivity", "onResume",
-                       _Hook(after=self._on_launch_resume), quiet=True)
-        self._ui(self._music_disc_attach)
+        self._try_hook("org.telegram.ui.DialogsActivity", "createView",
+                       _Hook(after=self._on_dialogs_created), quiet=True)
 
     def _music_rows(self):
         return [
             Header(text="音乐播放器"),
-            Switch(key="music_player", text="悬浮磁盘", default=DEFAULTS["music_player"],
+            Switch(key="music_player", text="播放器入口", default=DEFAULTS["music_player"],
                    icon="msg_music",
-                   subtext="全屏可拖动的小磁盘，播放时转圈；点按播放/暂停，左右滑切歌，长按关闭",
+                   subtext="在主页右上角加「音乐」按钮，点开全屏播放页（音频/语音 + 自动歌词）",
                    on_change=lambda v: self._on_music_change(v)),
-            Divider(text="播放当前聊天里的音频/语音消息，带系统通知栏控制。"),
+            Divider(text="播放当前聊天里的音频/语音消息。"),
         ]
 
     def _music_on(self):
@@ -1850,14 +1843,6 @@ class BubbleGlassPlugin(BasePlugin):
 
     def _on_music_change(self, value):
         self._on_change("music_player", value)
-        if value:
-            self._music_hidden = False
-            self._ui(self._music_disc_attach)
-        else:
-            self._ui(self._music_disc_remove_current)
-
-    def _on_launch_resume(self, param):
-        self._ui(self._music_disc_attach)
 
     # ---- chat tracking (playlist source) ----
 
@@ -1868,9 +1853,10 @@ class BubbleGlassPlugin(BasePlugin):
             if activity is None or view is None:
                 return
             ident = self._ident(activity)
-            self._music_chats[ident] = {"activity": activity}
-            self._music_current = activity
-            self._music_current_id = ident
+            st = self._music_state
+            st["chats"][ident] = {"activity": activity}
+            st["current"] = activity
+            st["current_id"] = ident
         except Exception:
             self._report("music_created")
 
@@ -1878,196 +1864,514 @@ class BubbleGlassPlugin(BasePlugin):
         try:
             activity = param.thisObject
             ident = self._ident(activity)
-            self._music_chats.pop(ident, None)
-            if self._music_current_id == ident:
-                self._music_current = None
-                self._music_current_id = None
+            st = self._music_state
+            st["chats"].pop(ident, None)
+            if st.get("current_id") == ident:
+                st["current"] = None
+                st["current_id"] = None
         except Exception:
             self._report("music_destroyed")
 
     def _music_active_chat(self):
-        if self._music_current is not None:
-            return self._music_current
-        for st in self._music_chats.values():
-            return st["activity"]
+        st = self._music_state
+        if st.get("current") is not None:
+            return st["current"]
+        for c in st["chats"].values():
+            return c["activity"]
         return None
 
-    # ---- disc UI ----
+    # ---- homepage entry ----
 
-    def _music_disc_state(self):
-        if self._music_disc is None:
-            self._music_disc = {"view": None, "spinning": False, "handler": None,
-                                "runnable": None, "lp_runnable": None}
-        return self._music_disc
-
-    def _music_disc_remove_current(self):
-        st = self._music_disc
-        if st is not None:
-            self._music_disc_remove(st)
-
-    def _music_disc_remove(self, st):
+    def _on_dialogs_created(self, param):
         try:
-            view = st.get("view")
-            if view is not None and view.getParent() is not None:
-                view.getParent().removeView(view)
-            st["view"] = None
-            h = st.get("handler")
-            r = st.get("runnable")
-            lp = st.get("lp_runnable")
-            if h is not None:
-                if r is not None:
-                    h.removeCallbacks(r)
-                if lp is not None:
-                    h.removeCallbacks(lp)
-        except Exception:
-            self._report("music_disc_remove")
-
-    def _music_disc_attach(self):
-        try:
-            if not self._music_on() or self._music_hidden:
+            activity = param.thisObject
+            if activity is None or not self._music_on():
                 return
-            from org.telegram.ui import LaunchActivity
-            activity = LaunchActivity.instance
-            if activity is None:
+            ident = self._ident(activity)
+            st = self._music_state
+            if ident in st["entries"]:
                 return
-            decor = activity.getWindow().getDecorView()
-            if decor is None:
+            ab = getattr(activity, "actionBar", None)
+            if ab is None:
                 return
-            st = self._music_disc_state()
-            if st.get("view") is not None:
+            ctx = None
+            for getter in ("getParentActivity", "getContext", "getActivity"):
+                try:
+                    ctx = getattr(activity, getter)()
+                    if ctx is not None:
+                        break
+                except Exception:
+                    pass
+            if ctx is None:
                 return
-            view = self._music_make_disc(st, activity)
-            if view is None:
-                return
-            view.setLayoutParams(self._music_disc_params())
-            decor.addView(view)
-            st["view"] = view
-            self._music_start_loop(st)
-            self._log_info("music disc attached")
+            from android_utils import OnClickListener
+            res_id = ctx.getResources().getIdentifier("baseline_music_note_24", "drawable", ctx.getPackageName())
+            if res_id == 0:
+                res_id = ctx.getResources().getIdentifier("ic_ab_other", "drawable", ctx.getPackageName())
+            menu = ab.createMenu()
+            item = menu.addItem(0x4D555349, res_id)  # 'MUSI'
+            item.setContentDescription("音乐播放器")
+            item.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_open)))
+            st["entries"].add(ident)
+            self._log_info("music entry added")
         except Exception as e:
-            self._log_error("music_disc_attach: %s" % e)
+            self._log_error("music_entry: %s" % e)
 
-    def _music_make_disc(self, st, ctx):
+    # ---- full-screen player ----
+
+    def _player_open(self):
+        try:
+            if self._music_state.get("dialog") is not None:
+                return
+            from android.app import Dialog
+            from android.view import WindowManager
+            ctx = None
+            chat = self._music_active_chat()
+            if chat is not None:
+                for getter in ("getParentActivity", "getContext", "getActivity"):
+                    try:
+                        ctx = getattr(chat, getter)()
+                        if ctx is not None:
+                            break
+                    except Exception:
+                        pass
+            if ctx is None:
+                from org.telegram.ui import LaunchActivity
+                ctx = LaunchActivity.instance
+            if ctx is None:
+                return
+            dialog = Dialog(ctx)
+            dialog.requestWindowFeature(0)  # no title
+            view = self._player_make_view(dialog, ctx)
+            dialog.setContentView(view)
+            window = dialog.getWindow()
+            if window is not None:
+                window.setLayout(WindowManager.LayoutParams.MATCH_PARENT,
+                                 WindowManager.LayoutParams.MATCH_PARENT)
+            dialog.setCancelable(True)
+            dialog.setOnDismissListener(lambda d: self._player_on_dismiss())
+            dialog.show()
+            self._music_state["dialog"] = dialog
+            self._music_state["view"] = view
+            self._player_load_playing()
+            self._player_start_loop()
+            self._log_info("player opened")
+        except Exception as e:
+            self._log_error("player_open: %s" % e)
+
+    def _player_on_dismiss(self):
+        st = self._music_state
+        st["dialog"] = None
+        st["view"] = None
+        h = st.get("handler")
+        r = st.get("runnable")
+        if h is not None and r is not None:
+            h.removeCallbacks(r)
+
+    def _player_close_player(self):
+        try:
+            dialog = self._music_state.get("dialog")
+            if dialog is not None:
+                dialog.dismiss()
+        except Exception:
+            pass
+        self._player_on_dismiss()
+
+    def _player_make_view(self, dialog, ctx):
         from android.graphics.drawable import GradientDrawable
         from android.os import Handler, Looper
         from android.view import Gravity
         from android.view.animation import Animation, LinearInterpolator, RotateAnimation
-        from android.widget import TextView
-        from android_utils import OnTouchListener
+        from android.widget import Button, LinearLayout, ProgressBar, ScrollView, TextView
+        from android_utils import OnClickListener
         from org.telegram.messenger import AndroidUtilities
 
-        disc = TextView(ctx)
-        disc.setText("💿")
-        disc.setTextSize(24)
-        disc.setGravity(Gravity.CENTER)
-        size = AndroidUtilities.dp(48)
-        disc.setWidth(size)
-        disc.setHeight(size)
+        st = self._music_state
+        st["handler"] = Handler(Looper.getMainLooper())
+
+        root = LinearLayout(ctx)
+        root.setOrientation(LinearLayout.VERTICAL)
+        root.setGravity(Gravity.CENTER_HORIZONTAL)
         try:
             gd = GradientDrawable()
-            gd.setShape(GradientDrawable.OVAL)
-            gd.setColor(0xF21A1C22)
-            gd.setStroke(AndroidUtilities.dp(1), 0x55FFFFFF)
-            disc.setBackground(gd)
+            gd.setColor(0xF20B0D12)
+            root.setBackground(gd)
         except Exception:
-            disc.setBackgroundColor(0xF21A1C22)
-        disc.setOnTouchListener(OnTouchListener(lambda v, ev: self._music_disc_touch(st, v, ev)))
+            root.setBackgroundColor(0xF20B0D12)
+        pad = AndroidUtilities.dp(20)
+        root.setPadding(pad, AndroidUtilities.dp(40), pad, pad)
+
+        top = LinearLayout(ctx)
+        top.setOrientation(LinearLayout.HORIZONTAL)
+        top.setGravity(Gravity.CENTER_VERTICAL)
+        title_top = TextView(ctx)
+        title_top.setText("音乐播放器")
+        title_top.setTextColor(0xFFFFFFFF)
+        title_top.setTextSize(16)
+        lp_top = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
+        title_top.setLayoutParams(lp_top)
+        close = Button(ctx)
+        close.setText("✕")
+        close.setTextSize(16)
+        close.setOnClickListener(OnClickListener(lambda v: self._player_close_player()))
+        top.addView(title_top)
+        top.addView(close)
+        root.addView(top)
+
+        # spinning disc
+        disc = TextView(ctx)
+        disc.setText("💿")
+        disc.setTextSize(54)
+        disc.setGravity(Gravity.CENTER)
+        dsize = AndroidUtilities.dp(180)
+        dl = LinearLayout.LayoutParams(dsize, dsize)
+        dl.setMargins(0, AndroidUtilities.dp(24), 0, AndroidUtilities.dp(8))
+        disc.setLayoutParams(dl)
+        try:
+            gd2 = GradientDrawable()
+            gd2.setShape(GradientDrawable.OVAL)
+            gd2.setColor(0xF21A1C22)
+            gd2.setStroke(AndroidUtilities.dp(2), 0x55FFFFFF)
+            disc.setBackground(gd2)
+        except Exception:
+            pass
+        root.addView(disc)
         st["disc"] = disc
         spin = RotateAnimation(0, 360, Animation.RELATIVE_TO_SELF, 0.5,
                                Animation.RELATIVE_TO_SELF, 0.5)
-        spin.setDuration(2400)
+        spin.setDuration(3000)
         spin.setRepeatCount(Animation.INFINITE)
         spin.setInterpolator(LinearInterpolator())
         st["spin"] = spin
         st["spinning"] = False
-        st["handler"] = Handler(Looper.getMainLooper())
-        st["lp_runnable"] = lambda: self._music_disc_close(st)
-        return disc
 
-    def _music_disc_params(self):
-        from android.view import Gravity
-        from android.widget import FrameLayout
-        from org.telegram.messenger import AndroidUtilities
-        size = AndroidUtilities.dp(48)
-        lp = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT,
-                                      FrameLayout.LayoutParams.WRAP_CONTENT,
-                                      Gravity.TOP | Gravity.START)
-        lp.leftMargin = max(0, AndroidUtilities.displaySize.x - size - AndroidUtilities.dp(12))
-        lp.topMargin = AndroidUtilities.dp(48)
-        return lp
+        song = TextView(ctx)
+        song.setText("未在播放")
+        song.setTextColor(0xFFFFFFFF)
+        song.setTextSize(18)
+        song.setGravity(Gravity.CENTER)
+        song.setSingleLine(True)
+        root.addView(song)
+        st["song"] = song
+        artist = TextView(ctx)
+        artist.setText("")
+        artist.setTextColor(0x99FFFFFF)
+        artist.setTextSize(13)
+        artist.setGravity(Gravity.CENTER)
+        artist.setSingleLine(True)
+        root.addView(artist)
+        st["artist"] = artist
 
-    def _music_disc_close(self, st):
-        self._music_hidden = True
-        self._music_disc_remove(st)
+        # progress
+        from android import R as _AR
+        prog = ProgressBar(ctx, None, _AR.attr.progressBarStyleHorizontal)
+        prog.setMax(1000)
+        prog.setProgress(0)
+        pl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                                       AndroidUtilities.dp(6))
+        pl.setMargins(0, AndroidUtilities.dp(12), 0, 0)
+        prog.setLayoutParams(pl)
+        root.addView(prog)
+        st["prog"] = prog
+        times = TextView(ctx)
+        times.setText("0:00 / 0:00")
+        times.setTextColor(0x99FFFFFF)
+        times.setTextSize(11)
+        times.setGravity(Gravity.CENTER)
+        root.addView(times)
+        st["times"] = times
 
-    def _music_disc_touch(self, st, view, ev):
-        from android.os import SystemClock
-        from android.view import MotionEvent
-        from org.telegram.messenger import AndroidUtilities
+        # controls
+        ctrl = LinearLayout(ctx)
+        ctrl.setOrientation(LinearLayout.HORIZONTAL)
+        ctrl.setGravity(Gravity.CENTER)
+        cl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                                       LinearLayout.LayoutParams.WRAP_CONTENT)
+        cl.setMargins(0, AndroidUtilities.dp(8), 0, 0)
+        ctrl.setLayoutParams(cl)
+
+        def cbtn(text, fn):
+            b = Button(ctx)
+            b.setText(text)
+            b.setTextSize(22)
+            b.setMinWidth(0)
+            b.setMinimumWidth(0)
+            b.setPadding(AndroidUtilities.dp(14), 0, AndroidUtilities.dp(14), 0)
+            b.setOnClickListener(OnClickListener(lambda v, f=fn: self._ui(f)))
+            return b
+
+        ctrl.addView(cbtn("⏮", lambda: self._player_step(-1)))
+        st["btn_play"] = cbtn("▶", self._player_toggle)
+        ctrl.addView(st["btn_play"])
+        ctrl.addView(cbtn("⏭", lambda: self._player_step(1)))
+        root.addView(ctrl)
+
+        # lyrics
+        scroll = ScrollView(ctx)
+        sl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0)
+        sl.setMargins(0, AndroidUtilities.dp(16), 0, 0)
+        scroll.setLayoutParams(sl)
+        lyrics = TextView(ctx)
+        lyrics.setTextColor(0xCCFFFFFF)
+        lyrics.setTextSize(14)
+        lyrics.setGravity(Gravity.CENTER)
+        lyrics.setText("暂无歌词")
+        scroll.addView(lyrics)
+        root.addView(scroll)
+        st["lyrics"] = lyrics
+        st["scroll"] = scroll
+        return root
+
+    def _player_load_playing(self):
         try:
-            action = ev.getAction()
-            if action == MotionEvent.ACTION_DOWN:
-                st["dragging"] = False
-                st["swiping"] = False
-                st["down_x"] = ev.getRawX()
-                st["down_y"] = ev.getRawY()
-                st["down_time"] = SystemClock.uptimeMillis()
-                lp = view.getLayoutParams()
-                st["lp_left"] = lp.leftMargin if lp is not None else 0
-                st["lp_top"] = lp.topMargin if lp is not None else 0
-                h = st.get("handler")
-                lp_r = st.get("lp_runnable")
-                if h is not None and lp_r is not None:
-                    h.removeCallbacks(lp_r)
-                    h.postDelayed(lp_r, 600)
-                return True
-            if action == MotionEvent.ACTION_MOVE:
-                dx = ev.getRawX() - st.get("down_x", 0)
-                dy = ev.getRawY() - st.get("down_y", 0)
-                if not st.get("swiping") and not st.get("dragging"):
-                    adx, ady = abs(dx), abs(dy)
-                    if adx > 30 and adx > ady * 2.0:
-                        st["swiping"] = True
-                    elif adx > 12 or ady > 12:
-                        st["dragging"] = True
-                if st.get("swiping") or st.get("dragging"):
-                    h = st.get("handler")
-                    lp_r = st.get("lp_runnable")
-                    if h is not None and lp_r is not None:
-                        h.removeCallbacks(lp_r)
-                if st.get("dragging") and not st.get("swiping"):
-                    lp = view.getLayoutParams()
-                    if lp is not None:
-                        size = AndroidUtilities.dp(48)
-                        left = max(0, min(AndroidUtilities.displaySize.x - size,
-                                           int(st.get("lp_left", 0) + dx)))
-                        top = max(0, min(AndroidUtilities.displaySize.y - size,
-                                          int(st.get("lp_top", 0) + dy)))
-                        lp.leftMargin = left
-                        lp.topMargin = top
-                        view.setLayoutParams(lp)
-                return True
-            if action == MotionEvent.ACTION_UP or action == MotionEvent.ACTION_CANCEL:
-                h = st.get("handler")
-                lp_r = st.get("lp_runnable")
-                if h is not None and lp_r is not None:
-                    h.removeCallbacks(lp_r)
-                if action == MotionEvent.ACTION_UP:
-                    dx = ev.getRawX() - st.get("down_x", 0)
-                    dy = ev.getRawY() - st.get("down_y", 0)
-                    quick = (SystemClock.uptimeMillis() - st.get("down_time", 0)) < 400
-                    if st.get("swiping") and quick and abs(dx) > 40:
-                        self._music_step_disc(-1 if dx > 0 else 1)
-                    elif not st.get("dragging") and not st.get("swiping"):
-                        self._ui(self._music_toggle_disc)
-                st["dragging"] = False
-                st["swiping"] = False
-                return True
+            from org.telegram.messenger import MediaController
+            mc = MediaController.getInstance()
+            current = mc.getPlayingMessageObject()
+            if current is not None:
+                self._player_ensure_playlist(current)
+                self._player_fetch_lyrics(current)
         except Exception:
-            self._report("music_disc_touch")
-        return False
+            self._report("player_load")
 
-    # ---- playback ----
+    def _player_ensure_playlist(self, current=None):
+        st = self._music_state
+        if st.get("playlist") is None:
+            activity = self._music_active_chat()
+            if activity is not None:
+                st["playlist"] = self._music_collect(activity)
+            else:
+                st["playlist"] = []
+        if current is not None and st["playlist"]:
+            try:
+                cid = current.getId()
+                for i, m in enumerate(st["playlist"]):
+                    if m.getId() == cid:
+                        st["index"] = i
+                        break
+            except Exception:
+                pass
+
+    def _player_step(self, delta):
+        st = self._music_state
+        msgs = st.get("playlist") or []
+        if not msgs:
+            return
+        idx = st.get("index", 0)
+        idx = (idx + delta) % len(msgs)
+        st["index"] = idx
+        self._player_play_index(idx)
+
+    def _player_play_index(self, idx):
+        st = self._music_state
+        msgs = st.get("playlist") or []
+        if idx < 0 or idx >= len(msgs):
+            return
+        st["index"] = idx
+        msg = msgs[idx]
+        try:
+            from java.util import ArrayList
+            from org.telegram.messenger import MediaController
+            arr = ArrayList()
+            for m in msgs:
+                arr.add(m)
+            did = 0
+            try:
+                did = msg.getDialogId()
+            except Exception:
+                pass
+            MediaController.getInstance().setPlaylist(arr, msg, did)
+            self._player_fetch_lyrics(msg)
+        except Exception as e:
+            self._report("player_play_index: %s" % e)
+            try:
+                from org.telegram.messenger import MediaController
+                MediaController.getInstance().playMessage(msg)
+            except Exception:
+                pass
+
+    def _player_toggle(self):
+        try:
+            from org.telegram.messenger import MediaController
+            mc = MediaController.getInstance()
+            current = mc.getPlayingMessageObject()
+            if current is None:
+                idx = self._music_state.get("index", 0)
+                self._player_play_index(idx)
+                return
+            if mc.isMessagePaused():
+                mc.playMessage(current)
+            else:
+                mc.pauseMessage(current)
+        except Exception:
+            self._report("player_toggle")
+
+    def _player_start_loop(self):
+        try:
+            st = self._music_state
+            h = st.get("handler")
+            if h is None:
+                return
+            runnable = st.get("runnable")
+            if runnable is None:
+                def loop():
+                    try:
+                        self._player_refresh()
+                    except Exception:
+                        pass
+                    hh = st.get("handler")
+                    if hh is not None and st.get("dialog") is not None:
+                        hh.postDelayed(loop, 500)
+                runnable = loop
+                st["runnable"] = runnable
+            h.removeCallbacks(runnable)
+            h.postDelayed(runnable, 500)
+        except Exception:
+            self._report("player_loop")
+
+    def _player_refresh(self):
+        try:
+            from org.telegram.messenger import MediaController
+            st = self._music_state
+            mc = MediaController.getInstance()
+            current = mc.getPlayingMessageObject()
+            playing = current is not None and not mc.isMessagePaused()
+            self._player_set_spin(st, playing)
+            title = self._music_title(current) if current is not None else "未在播放"
+            st["song"].setText(title)
+            artist = ""
+            try:
+                artist = current.getMusicPerformer() or ""
+            except Exception:
+                pass
+            st["artist"].setText(artist)
+            st["btn_play"].setText("⏸" if playing else "▶")
+            pos = dur = 0
+            if current is not None:
+                try:
+                    pos = mc.getProgressMs(current)
+                    dur = mc.getDuration()
+                except Exception:
+                    pass
+            if dur > 0:
+                st["prog"].setProgress(int(pos * 1000 / dur))
+            else:
+                st["prog"].setProgress(0)
+            st["times"].setText("%s / %s" % (self._fmt_ms(pos), self._fmt_ms(dur)))
+            self._player_update_lyrics(pos)
+        except Exception:
+            self._report("player_refresh")
+
+    def _player_set_spin(self, st, spinning):
+        try:
+            disc = st.get("disc")
+            anim = st.get("spin")
+            if disc is None or anim is None:
+                return
+            if st.get("spinning") == spinning:
+                return
+            st["spinning"] = spinning
+            if spinning:
+                disc.startAnimation(anim)
+            else:
+                disc.clearAnimation()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _fmt_ms(ms):
+        try:
+            ms = int(ms)
+        except Exception:
+            return "0:00"
+        if ms < 0:
+            ms = 0
+        s = ms // 1000
+        return "%d:%02d" % (s // 60, s % 60)
+
+    # ---- lyrics (LRCLIB) ----
+
+    def _player_fetch_lyrics(self, msg):
+        title = self._music_title(msg)
+        artist = ""
+        try:
+            artist = msg.getMusicPerformer() or ""
+        except Exception:
+            pass
+        st = self._music_state
+        st["lyrics"] = []
+        st["lyric_idx"] = -1
+        view = st.get("lyrics")
+        if view is not None:
+            view.setText("加载歌词…")
+
+        def work():
+            try:
+                import json
+                import urllib.parse
+                import urllib.request
+                q = urllib.parse.urlencode({"track_name": title, "artist_name": artist})
+                url = "https://lrclib.net/api/get?" + q
+                with urllib.request.urlopen(url, timeout=8) as r:
+                    data = json.loads(r.read().decode("utf-8"))
+                synced = data.get("syncedLyrics") or ""
+                plain = data.get("plainLyrics") or ""
+                lines = []
+                if synced:
+                    for ln in synced.splitlines():
+                        ln = ln.strip()
+                        if not ln:
+                            continue
+                        m = __import__("re").match(r"\[(\d+):(\d+(?:\.\d+)?)\](.*)", ln)
+                        if m:
+                            mm = int(m.group(1))
+                            ss = float(m.group(2))
+                            txt = m.group(3).strip()
+                            lines.append((int((mm * 60 + ss) * 1000), txt))
+                text = "\n".join(t for _, t in lines) if lines else (plain or "暂无歌词")
+                self._ui(lambda t=text, ls=lines: self._player_set_lyrics(t, ls))
+            except Exception:
+                self._ui(lambda: self._player_set_lyrics("暂无歌词", []))
+        import threading
+        threading.Thread(target=work, daemon=True).start()
+
+    def _player_set_lyrics(self, text, lines):
+        try:
+            st = self._music_state
+            st["lyrics"] = lines
+            st["lyric_idx"] = -1
+            view = st.get("lyrics")
+            if view is not None:
+                view.setText(text if text else "暂无歌词")
+        except Exception:
+            self._report("player_set_lyrics")
+
+    def _player_update_lyrics(self, pos_ms):
+        try:
+            st = self._music_state
+            lines = st.get("lyrics") or []
+            if not lines:
+                return
+            idx = -1
+            for i, (t, _) in enumerate(lines):
+                if t <= pos_ms:
+                    idx = i
+                else:
+                    break
+            if idx != st.get("lyric_idx"):
+                st["lyric_idx"] = idx
+                scroll = st.get("scroll")
+                view = st.get("lyrics")
+                if scroll is not None and view is not None and idx >= 0:
+                    # simple: scroll to approximate position
+                    try:
+                        line_h = view.getLineHeight() if hasattr(view, "getLineHeight") else 40
+                        scroll.fullScroll(33)  # View.FOCUS_DOWN
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    # ---- helpers ----
 
     def _music_collect(self, activity):
         msgs = []
@@ -2098,106 +2402,3 @@ class BubbleGlassPlugin(BasePlugin):
             return msg.messageOwner.message or "音频"
         except Exception:
             return "音频"
-
-    def _music_refresh(self, st):
-        try:
-            from org.telegram.messenger import MediaController
-            mc = MediaController.getInstance()
-            current = mc.getPlayingMessageObject()
-            playing = current is not None and not mc.isMessagePaused()
-            self._music_set_spin(st, playing)
-        except Exception:
-            self._report("music_refresh")
-
-    def _music_set_spin(self, st, spinning):
-        try:
-            disc = st.get("disc")
-            anim = st.get("spin")
-            if disc is None or anim is None:
-                return
-            if st.get("spinning") == spinning:
-                return
-            st["spinning"] = spinning
-            if spinning:
-                disc.startAnimation(anim)
-            else:
-                disc.clearAnimation()
-        except Exception:
-            pass
-
-    def _music_start_loop(self, st):
-        try:
-            h = st.get("handler")
-            if h is None:
-                return
-            runnable = st.get("runnable")
-            if runnable is None:
-                def loop():
-                    try:
-                        self._music_refresh(st)
-                    except Exception:
-                        pass
-                    hh = st.get("handler")
-                    if hh is not None and st.get("view") is not None:
-                        hh.postDelayed(loop, 500)
-                runnable = loop
-                st["runnable"] = runnable
-            h.removeCallbacks(runnable)
-            h.postDelayed(runnable, 500)
-        except Exception:
-            self._report("music_loop")
-
-    def _music_toggle_disc(self):
-        try:
-            from org.telegram.messenger import MediaController
-            mc = MediaController.getInstance()
-            current = mc.getPlayingMessageObject()
-            if current is None:
-                activity = self._music_active_chat()
-                if activity is None:
-                    return
-                msgs = self._music_collect(activity)
-                if not msgs:
-                    return
-                self._music_play_msg(msgs[-1])
-                return
-            if mc.isMessagePaused():
-                mc.playMessage(current)
-            else:
-                mc.pauseMessage(current)
-        except Exception:
-            self._report("music_toggle_disc")
-
-    def _music_step_disc(self, delta):
-        try:
-            activity = self._music_active_chat()
-            if activity is None:
-                return
-            msgs = self._music_collect(activity)
-            if not msgs:
-                return
-            idx = -1
-            try:
-                from org.telegram.messenger import MediaController
-                cur = MediaController.getInstance().getPlayingMessageObject()
-                if cur is not None:
-                    cid = cur.getId()
-                    for i, m in enumerate(msgs):
-                        if m.getId() == cid:
-                            idx = i
-                            break
-            except Exception:
-                pass
-            if idx < 0:
-                idx = 0
-            idx = (idx + delta) % len(msgs)
-            self._music_play_msg(msgs[idx])
-        except Exception:
-            self._report("music_step_disc")
-
-    def _music_play_msg(self, msg):
-        try:
-            from org.telegram.messenger import MediaController
-            MediaController.getInstance().playMessage(msg)
-        except Exception:
-            self._report("music_play_msg")
