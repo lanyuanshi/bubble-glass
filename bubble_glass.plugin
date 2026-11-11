@@ -12,9 +12,9 @@ except ImportError:
 
 __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
-__description__ = "聊天气泡透明度 / 模糊 / 浓度可调，内置「晴空」「夜幕」两种玻璃风格；主页 / 联系人 / 设置页各自的壁纸与透明度；防撤回并标记被撤回的消息"
+__description__ = "聊天气泡透明度 / 模糊 / 浓度可调，内置「晴空」「夜幕」两种玻璃风格；主页 / 联系人 / 设置页各自的壁纸与透明度；防撤回并标记被撤回的消息；允许在受保护群组/频道截图和下载"
 __author__ = "蓝鸢"
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 __icon__ = "exteraPlugins/1"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -62,6 +62,7 @@ DEFAULTS = {
     "contacts_transparency": 60,
     "settings_mode": 0,
     "settings_transparency": 60,
+    "allow_noforwards": False,
 }
 
 PRESETS = {
@@ -205,6 +206,7 @@ class BubbleGlassPlugin(BasePlugin):
         self._hook_pages()
         self._cg_init()
         self._hook_contacts()
+        self._hook_noforwards()
 
     def on_plugin_unload(self):
         self._cg_unload()
@@ -249,6 +251,7 @@ class BubbleGlassPlugin(BasePlugin):
                 "blur": int(max(0, min(25, float(cfg["blur"])))),
                 "density": max(0.0, min(100.0, float(cfg["density"]))),
                 "outline": bool(cfg["outline"]),
+                "allow_noforwards": bool(cfg["allow_noforwards"]),
             }
             for page in PAGE_INFO:
                 mode = int(cfg[page + "_mode"])
@@ -310,7 +313,7 @@ class BubbleGlassPlugin(BasePlugin):
             Divider(text="模糊取自当前聊天壁纸。改完设置后返回聊天即可看到效果。"),
             Text(text="页面壁纸与透明度", subtext="主页 / 联系人 / 设置 各自的壁纸和透明度",
                  icon="msg_background", accent=True, create_sub_fragment=self._page_sub_rows),
-        ] + self._cg_rows() + self._ar_rows()
+        ] + self._cg_rows() + self._ar_rows() + self._nf_rows()
 
     def _page_sub_rows(self):
         rows = []
@@ -399,6 +402,26 @@ class BubbleGlassPlugin(BasePlugin):
                 item.setConfigString("" if mark is None else str(mark))
             except Exception:
                 self._report("anti_recall_mark")
+
+    # ---------- content protection ----------
+
+    def _nf_rows(self):
+        return [
+            Header(text="内容保护"),
+            Switch(key="allow_noforwards", text="允许截图和下载", default=DEFAULTS["allow_noforwards"],
+                   subtext="在开启「禁止截图和转发」的群组/频道里也能截图、保存媒体",
+                   on_change=lambda v: self._on_change("allow_noforwards", v)),
+            Divider(text="只影响本机的显示与保存；转发仍受服务端限制，秘密聊天不受影响。"),
+        ]
+
+    def _hook_noforwards(self):
+        hook = _Hook(after=self._on_noforwards)
+        self._try_hook("org.telegram.messenger.MessagesController", "isChatNoForwards", hook, quiet=True)
+        self._try_hook("org.telegram.messenger.MessagesController", "isUserNoForwards", hook, quiet=True)
+
+    def _on_noforwards(self, param):
+        if self._cfg.get("allow_noforwards"):
+            param.setResult(False)
 
     def _ar_init(self):
         # Only touch the client's own config for values the user actually set in

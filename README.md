@@ -29,6 +29,11 @@ exteraless / exteraGram 的 Python 插件（Chaquopy）：给聊天气泡、主�
 - 可选是否包含机器人消息
 - 基于客户端（exteraless / NagramX）的「保存已删除消息」能力实现：消息内容保留，时间旁显示标记
 
+### 内容保护（允许截图和下载）
+- 在开启「禁止截图和转发」的群组/频道里，也能截图、保存媒体
+- 通过让 `MessagesController.isChatNoForwards` / `isUserNoForwards` 在开启时返回 false 来解除 `FLAG_SECURE` 和保存限制
+- 只影响本机显示与保存；转发仍受服务端限制，秘密聊天不受影响
+
 ## 安装
 
 1. 在 exteraless 中打开 `bubble_glass.plugin` 安装（首次会要求授予 **hooks** 钩子权限；壁纸功能还需要 **intents**、**files** 权限）
