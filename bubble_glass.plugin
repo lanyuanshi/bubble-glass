@@ -14,14 +14,13 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.12.0"
+__version__ = "1.11.0"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
 
 STYLE_THEME, STYLE_CLEAR, STYLE_NIGHT, STYLE_AUTO = 0, 1, 2, 3
-STYLE_ROSE, STYLE_MINT, STYLE_LAVENDER, STYLE_SUNSET = 4, 5, 6, 7
-STYLE_ITEMS = ["跟随主题", "晴空", "夜幕", "自动（日间晴空 · 夜间夜幕）", "樱花粉", "薄荷", "薰衣草", "晚霞"]
+STYLE_ITEMS = ["跟随主题", "晴空", "夜幕", "自动（日间晴空 · 夜间夜幕）"]
 
 HOME_OFF, HOME_IMAGE, HOME_CHAT = 0, 1, 2
 HOME_ITEMS = ["关闭", "自定义图片", "跟随聊天壁纸"]
@@ -69,20 +68,12 @@ DEFAULTS = {
 PRESETS = {
     STYLE_CLEAR: {"style": STYLE_CLEAR, "transparency": 30, "blur": 14, "density": 60},
     STYLE_NIGHT: {"style": STYLE_NIGHT, "transparency": 20, "blur": 16, "density": 70},
-    STYLE_ROSE: {"style": STYLE_ROSE, "transparency": 30, "blur": 14, "density": 60},
-    STYLE_MINT: {"style": STYLE_MINT, "transparency": 32, "blur": 12, "density": 55},
-    STYLE_LAVENDER: {"style": STYLE_LAVENDER, "transparency": 30, "blur": 14, "density": 60},
-    STYLE_SUNSET: {"style": STYLE_SUNSET, "transparency": 28, "blur": 12, "density": 55},
 }
 
 # (incoming tint, outgoing tint, outline color)
 TINTS = {
     STYLE_CLEAR: (0xFFFFFFFF, 0xFFD6ECFF, 0x80FFFFFF),
     STYLE_NIGHT: (0xFF1A1C22, 0xFF14304F, 0x33FFFFFF),
-    STYLE_ROSE: (0xFFFFF0F5, 0xFFFFD6E8, 0x80FFB7D5),
-    STYLE_MINT: (0xFFF0FFF5, 0xFFD6F5E3, 0x80B7E8C9),
-    STYLE_LAVENDER: (0xFFF5F0FF, 0xFFE6D9FF, 0x80C7B7E8),
-    STYLE_SUNSET: (0xFFFFF5E6, 0xFFFFE0C2, 0x80FFB98A),
 }
 THEME_OUTLINE = 0x40FFFFFF
 
@@ -319,14 +310,6 @@ class BubbleGlassPlugin(BasePlugin):
                  on_click=lambda *_: self._apply_preset(STYLE_CLEAR)),
             Text(text="夜幕", subtext="深色低调的暗色玻璃", icon="msg_brightness_low",
                  on_click=lambda *_: self._apply_preset(STYLE_NIGHT)),
-            Text(text="樱花粉", subtext="柔和粉色的春日玻璃", icon="msg_favorite",
-                 on_click=lambda *_: self._apply_preset(STYLE_ROSE)),
-            Text(text="薄荷", subtext="清爽薄荷绿玻璃", icon="msg_check",
-                 on_click=lambda *_: self._apply_preset(STYLE_MINT)),
-            Text(text="薰衣草", subtext="梦幻紫色玻璃", icon="msg_star",
-                 on_click=lambda *_: self._apply_preset(STYLE_LAVENDER)),
-            Text(text="晚霞", subtext="温暖橘粉玻璃", icon="msg_schedule",
-                 on_click=lambda *_: self._apply_preset(STYLE_SUNSET)),
             Divider(text="模糊取自当前聊天壁纸。改完设置后返回聊天即可看到效果。"),
             Text(text="页面壁纸与透明度", subtext="主页 / 联系人 / 设置 各自的壁纸和透明度",
                  icon="msg_background", accent=True, create_sub_fragment=self._page_sub_rows),
