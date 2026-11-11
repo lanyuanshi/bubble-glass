@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.5.3"
+__version__ = "1.5.4"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -344,8 +344,11 @@ class BubbleGlassPlugin(BasePlugin):
             Switch(key="anti_recall_bots", text="包括机器人消息", default=self._ar_bots(), icon="msg_users",
                    subtext="机器人发的消息被撤回时也保留",
                    on_change=lambda v: self._ar_apply_bots(v)),
+            Switch(key="anti_recall_icon", text="使用图标", default=self._ar_icon(), icon="msg_edit",
+                   subtext="开启显示垃圾桶图标；关闭后才显示下面的自定义文字",
+                   on_change=lambda v: self._ar_apply_icon(v)),
             Input(key="anti_recall_mark", text="撤回标记", default=self._ar_mark(), icon="msg_edit",
-                  subtext="显示在被撤回消息的时间旁，留空用客户端默认",
+                  subtext="「使用图标」关闭时才生效，显示在被撤回消息时间旁；留空用客户端默认",
                   on_change=lambda v: self._ar_apply_mark(v)),
             Divider(text="基于客户端的「保存已删除消息」能力：消息内容保留，时间旁显示标记。"),
         ]
@@ -395,6 +398,17 @@ class BubbleGlassPlugin(BasePlugin):
             except Exception:
                 self._report("anti_recall_bots")
 
+    def _ar_icon(self):
+        return self._ar_read_bool("getUseDeletedIcon")
+
+    def _ar_apply_icon(self, on):
+        item = self._naconfig("getUseDeletedIcon")
+        if item is not None:
+            try:
+                item.setConfigBool(bool(on))
+            except Exception:
+                self._report("anti_recall_icon")
+
     def _ar_apply_mark(self, mark):
         item = self._naconfig("getCustomDeletedMark")
         if item is not None:
@@ -427,7 +441,8 @@ class BubbleGlassPlugin(BasePlugin):
         # Only touch the client's own config for values the user actually set in
         # this plugin, so we never clobber exteraless' experimental settings.
         try:
-            for key, apply in (("anti_recall", self._ar_apply), ("anti_recall_bots", self._ar_apply_bots)):
+            for key, apply in (("anti_recall", self._ar_apply), ("anti_recall_bots", self._ar_apply_bots),
+                               ("anti_recall_icon", self._ar_apply_icon)):
                 value = self.get_setting(key, None)
                 if value is not None:
                     apply(self._cg_on(value))
