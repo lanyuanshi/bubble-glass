@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载、音乐播放器"
 __author__ = "蓝鸢"
-__version__ = "1.9.0"
+__version__ = "1.9.1"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -63,7 +63,7 @@ DEFAULTS = {
     "settings_mode": 0,
     "settings_transparency": 60,
     "allow_noforwards": False,
-    "music_player": False,
+    "music_player": True,
 }
 
 PRESETS = {
@@ -1827,14 +1827,17 @@ class BubbleGlassPlugin(BasePlugin):
                        _Hook(before=self._on_chat_destroyed), quiet=True)
         self._try_hook("org.telegram.ui.DialogsActivity", "createView",
                        _Hook(after=self._on_dialogs_created), quiet=True)
+        self._try_hook("org.telegram.ui.DialogsActivity", "onResume",
+                       _Hook(after=self._on_dialogs_created), quiet=True)
 
     def _music_rows(self):
         return [
             Header(text="音乐播放器"),
             Switch(key="music_player", text="播放器入口", default=DEFAULTS["music_player"],
                    icon="msg_music",
-                   subtext="在主页右上角加「音乐」按钮，点开全屏播放页（音频/语音 + 自动歌词）",
+                   subtext="在主页右上角三点菜单左边加「音乐」按钮，点开全屏播放页（音频/语音 + 自动歌词）",
                    on_change=lambda v: self._on_music_change(v)),
+            Text(text="打开全屏播放器", icon="msg_music", on_click=lambda *_: self._ui(self._player_open)),
             Divider(text="播放当前聊天里的音频/语音消息。"),
         ]
 
@@ -1905,17 +1908,35 @@ class BubbleGlassPlugin(BasePlugin):
             if ctx is None:
                 return
             from android_utils import OnClickListener
-            res_id = ctx.getResources().getIdentifier("baseline_music_note_24", "drawable", ctx.getPackageName())
-            if res_id == 0:
-                res_id = ctx.getResources().getIdentifier("ic_ab_other", "drawable", ctx.getPackageName())
+            res_id = 0
+            for icon_name in ("baseline_music_note_24", "search_music_filled", "ic_ab_other"):
+                res_id = ctx.getResources().getIdentifier(icon_name, "drawable", ctx.getPackageName())
+                if res_id != 0:
+                    break
             menu = ab.createMenu()
-            item = menu.addItem(0x4D555349, res_id)  # 'MUSI'
+            index = self._music_menu_index(menu)
+            item = menu.addItemAt(index, 0x4D555349, res_id, None, 0, None, 0, None, None)
             item.setContentDescription("音乐播放器")
             item.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_open)))
             st["entries"].add(ident)
-            self._log_info("music entry added")
+            self._log_info("music entry added idx=%s res=%s" % (index, res_id))
         except Exception as e:
             self._log_error("music_entry: %s" % e)
+
+    def _music_menu_index(self, menu):
+        try:
+            count = menu.getChildCount()
+            for i in range(count):
+                child = menu.getChildAt(i)
+                try:
+                    tag = child.getTag()
+                    if tag is not None and int(tag) == 4:
+                        return i
+                except Exception:
+                    pass
+            return max(0, count - 1)
+        except Exception:
+            return 0
 
     # ---- full-screen player ----
 
@@ -1924,6 +1945,7 @@ class BubbleGlassPlugin(BasePlugin):
             if self._music_state.get("dialog") is not None:
                 return
             from android.app import Dialog
+            from android.view import Window
             from android.view import WindowManager
             ctx = None
             chat = self._music_active_chat()
@@ -1941,13 +1963,18 @@ class BubbleGlassPlugin(BasePlugin):
             if ctx is None:
                 return
             dialog = Dialog(ctx)
-            dialog.requestWindowFeature(0)  # no title
+            try:
+                dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
+            except Exception:
+                pass
             view = self._player_make_view(dialog, ctx)
             dialog.setContentView(view)
             window = dialog.getWindow()
             if window is not None:
                 window.setLayout(WindowManager.LayoutParams.MATCH_PARENT,
                                  WindowManager.LayoutParams.MATCH_PARENT)
+                window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
+                                WindowManager.LayoutParams.FLAG_FULLSCREEN)
             dialog.setCancelable(True)
             dialog.setOnDismissListener(lambda d: self._player_on_dismiss())
             dialog.show()
@@ -2063,8 +2090,7 @@ class BubbleGlassPlugin(BasePlugin):
         st["artist"] = artist
 
         # progress
-        from android import R as _AR
-        prog = ProgressBar(ctx, None, _AR.attr.progressBarStyleHorizontal)
+        prog = ProgressBar(ctx, None, 0x0101000a)  # android.R.attr.progressBarStyleHorizontal
         prog.setMax(1000)
         prog.setProgress(0)
         pl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
