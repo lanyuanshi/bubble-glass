@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载、音乐播放器"
 __author__ = "蓝鸢"
-__version__ = "1.6.2"
+__version__ = "1.6.3"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1950,6 +1950,7 @@ class BubbleGlassPlugin(BasePlugin):
         from android.text import TextUtils
         from android.view import Gravity
         from android.widget import Button, LinearLayout, TextView
+        from android_utils import OnClickListener, OnTouchListener
         from org.telegram.messenger import AndroidUtilities
 
         activity = st["activity"]
@@ -1980,7 +1981,7 @@ class BubbleGlassPlugin(BasePlugin):
             b.setMinWidth(0)
             b.setMinimumWidth(0)
             b.setPadding(AndroidUtilities.dp(6), 0, AndroidUtilities.dp(6), 0)
-            b.setOnClickListener(lambda *_: on_click())
+            b.setOnClickListener(OnClickListener(lambda v, fn=on_click: fn()))
             return b
 
         st["btn_prev"] = btn("⏮", lambda: self._music_step(st, -1))
@@ -2001,7 +2002,7 @@ class BubbleGlassPlugin(BasePlugin):
         for v in (st["btn_prev"], st["btn_play"], title, st["btn_next"], st["btn_close"]):
             bar.addView(v)
 
-        title.setOnTouchListener(lambda v, ev: self._music_on_touch(st, v, ev))
+        title.setOnTouchListener(OnTouchListener(lambda v, ev: self._music_on_touch(st, v, ev)))
         return bar
 
     def _music_on_touch(self, st, view, ev):
