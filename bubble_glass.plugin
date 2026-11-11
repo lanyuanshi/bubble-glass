@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载、音乐播放器"
 __author__ = "蓝鸢"
-__version__ = "1.9.3"
+__version__ = "1.10.0"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -2010,148 +2010,395 @@ class BubbleGlassPlugin(BasePlugin):
         self._player_on_dismiss()
 
     def _player_make_view(self, dialog, ctx):
+        from android.graphics import Color, PorterDuff, Typeface
         from android.graphics.drawable import GradientDrawable
         from android.os import Handler, Looper
-        from android.view import Gravity
+        from android.text import TextUtils
+        from android.view import Gravity, View
         from android.view.animation import Animation, LinearInterpolator, RotateAnimation
-        from android.widget import Button, LinearLayout, ProgressBar, ScrollView, TextView
-        from android_utils import OnClickListener
-        from org.telegram.messenger import AndroidUtilities
+        from android.widget import Button, FrameLayout, LinearLayout, ScrollView, SeekBar, TextView
+        from org.telegram.ui import AndroidUtilities
+        from android_utils import OnClickListener, OnSeekBarChangeListener
 
         st = self._music_state
-        st["handler"] = Handler(Looper.getMainLooper())
+        st["dialog"] = dialog
+        st["ctx"] = ctx
+        st.setdefault("repeat", 1)
+
+        def dp(v):
+            return AndroidUtilities.dp(v)
 
         root = LinearLayout(ctx)
         root.setOrientation(LinearLayout.VERTICAL)
-        root.setGravity(Gravity.CENTER_HORIZONTAL)
-        try:
-            gd = GradientDrawable()
-            gd.setColor(0xF20B0D12)
-            root.setBackground(gd)
-        except Exception:
-            root.setBackgroundColor(0xF20B0D12)
-        pad = AndroidUtilities.dp(20)
-        root.setPadding(pad, AndroidUtilities.dp(40), pad, pad)
+        bg = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
+                              [0xFFFFD6E8, 0xFFE6D9FF, 0xFFD9E8FF])
+        root.setBackground(bg)
+        root.setPadding(dp(20), dp(14), dp(20), dp(14))
 
+        # ---- top bar ----
         top = LinearLayout(ctx)
         top.setOrientation(LinearLayout.HORIZONTAL)
         top.setGravity(Gravity.CENTER_VERTICAL)
-        title_top = TextView(ctx)
-        title_top.setText("音乐播放器")
-        title_top.setTextColor(0xFFFFFFFF)
-        title_top.setTextSize(16)
-        lp_top = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
-        title_top.setLayoutParams(lp_top)
-        close = Button(ctx)
-        close.setText("✕")
-        close.setTextSize(16)
-        close.setOnClickListener(OnClickListener(lambda v: self._player_close_player()))
-        top.addView(title_top)
-        top.addView(close)
+        top.setLayoutParams(LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT))
+        back = TextView(ctx)
+        back.setText("收起")
+        back.setTextSize(15)
+        back.setTextColor(0xFF7A6B8C)
+        back.setPadding(dp(6), dp(6), dp(6), dp(6))
+        back.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_close_player)))
+        top.addView(back)
+        title_tv = TextView(ctx)
+        title_tv.setText("正在播放")
+        title_tv.setTextSize(17)
+        title_tv.setTextColor(0xFF4A3B5C)
+        title_tv.setTypeface(Typeface.DEFAULT_BOLD)
+        tlp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
+        tlp.gravity = Gravity.CENTER
+        title_tv.setLayoutParams(tlp)
+        top.addView(title_tv)
+        pad = TextView(ctx)
+        pad.setText(" ")
+        pad.setTextSize(15)
+        pad.setPadding(dp(6), dp(6), dp(6), dp(6))
+        top.addView(pad)
         root.addView(top)
 
-        # spinning disc
+        # ---- cover / spinning disc ----
+        cover_wrap = FrameLayout(ctx)
+        cwl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                                        LinearLayout.LayoutParams.WRAP_CONTENT)
+        cwl.gravity = Gravity.CENTER_HORIZONTAL
+        cwl.setMargins(0, dp(18), 0, dp(6))
+        cover_wrap.setLayoutParams(cwl)
+
+        glow = GradientDrawable()
+        glow.setShape(GradientDrawable.OVAL)
+        glow.setColor(0x55FF9EC7)
+        glow_view = TextView(ctx)
+        glow_view.setBackground(glow)
+        fl = FrameLayout.LayoutParams(dp(230), dp(230), Gravity.CENTER)
+        cover_wrap.addView(glow_view, fl)
+
+        disc_bg = GradientDrawable()
+        disc_bg.setShape(GradientDrawable.OVAL)
+        disc_bg.setColor(0xFFFFF6FA)
+        disc_bg.setStroke(dp(2), 0xFFFFB7D5)
         disc = TextView(ctx)
         disc.setText("💿")
-        disc.setTextSize(54)
+        disc.setTextSize(120)
         disc.setGravity(Gravity.CENTER)
-        dsize = AndroidUtilities.dp(180)
-        dl = LinearLayout.LayoutParams(dsize, dsize)
-        dl.setMargins(0, AndroidUtilities.dp(24), 0, AndroidUtilities.dp(8))
-        disc.setLayoutParams(dl)
-        try:
-            gd2 = GradientDrawable()
-            gd2.setShape(GradientDrawable.OVAL)
-            gd2.setColor(0xF21A1C22)
-            gd2.setStroke(AndroidUtilities.dp(2), 0x55FFFFFF)
-            disc.setBackground(gd2)
-        except Exception:
-            pass
-        root.addView(disc)
+        disc.setBackground(disc_bg)
         st["disc"] = disc
-        spin = RotateAnimation(0, 360, Animation.RELATIVE_TO_SELF, 0.5,
-                               Animation.RELATIVE_TO_SELF, 0.5)
-        spin.setDuration(3000)
-        spin.setRepeatCount(Animation.INFINITE)
-        spin.setInterpolator(LinearInterpolator())
-        st["spin"] = spin
-        st["spinning"] = False
+        dl = FrameLayout.LayoutParams(dp(180), dp(180), Gravity.CENTER)
+        cover_wrap.addView(disc, dl)
 
+        anim = RotateAnimation(0, 360, Animation.RELATIVE_TO_SELF, 0.5,
+                               Animation.RELATIVE_TO_SELF, 0.5)
+        anim.setDuration(4000)
+        anim.setRepeatCount(Animation.INFINITE)
+        anim.setInterpolator(LinearInterpolator())
+        st["spin"] = anim
+        st["spinning"] = False
+        root.addView(cover_wrap)
+
+        # ---- song info ----
         song = TextView(ctx)
         song.setText("未在播放")
-        song.setTextColor(0xFFFFFFFF)
-        song.setTextSize(18)
+        song.setTextSize(20)
+        song.setTextColor(0xFF4A3B5C)
+        song.setTypeface(Typeface.DEFAULT_BOLD)
         song.setGravity(Gravity.CENTER)
         song.setSingleLine(True)
+        song.setEllipsize(TextUtils.TruncateAt.END)
+        sl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                                       LinearLayout.LayoutParams.WRAP_CONTENT)
+        sl.setMargins(0, dp(10), 0, 0)
+        song.setLayoutParams(sl)
         root.addView(song)
         st["song"] = song
+
         artist = TextView(ctx)
         artist.setText("")
-        artist.setTextColor(0x99FFFFFF)
-        artist.setTextSize(13)
+        artist.setTextSize(14)
+        artist.setTextColor(0xFF8A7B9C)
         artist.setGravity(Gravity.CENTER)
         artist.setSingleLine(True)
+        artist.setEllipsize(TextUtils.TruncateAt.END)
+        al = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                                       LinearLayout.LayoutParams.WRAP_CONTENT)
+        al.setMargins(0, dp(2), 0, dp(8))
+        artist.setLayoutParams(al)
         root.addView(artist)
         st["artist"] = artist
 
-        # progress
-        prog = ProgressBar(ctx, None, 0x0101000a)  # android.R.attr.progressBarStyleHorizontal
-        prog.setMax(1000)
-        prog.setProgress(0)
-        pl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                                       AndroidUtilities.dp(6))
-        pl.setMargins(0, AndroidUtilities.dp(12), 0, 0)
-        prog.setLayoutParams(pl)
-        root.addView(prog)
-        st["prog"] = prog
+        # ---- seek bar with avatar thumb ----
+        seek = SeekBar(ctx)
+        seek.setMax(1000)
+        try:
+            thumb = self._make_avatar_thumb(ctx)
+            if thumb is not None:
+                seek.setThumb(thumb)
+                seek.setThumbOffset(dp(18))
+        except Exception:
+            pass
+        try:
+            seek.getProgressDrawable().setColorFilter(0xFFFF6FA5, PorterDuff.Mode.SRC_IN)
+        except Exception:
+            pass
+        seek.setOnSeekBarChangeListener(OnSeekBarChangeListener(
+            lambda sb, prog, from_user: self._player_on_seek_change(prog, from_user),
+            lambda sb: None,
+            lambda sb: self._player_on_seek_stop(sb.getProgress())))
+        st["seek"] = seek
+        root.addView(seek)
+
         times = TextView(ctx)
         times.setText("0:00 / 0:00")
-        times.setTextColor(0x99FFFFFF)
-        times.setTextSize(11)
-        times.setGravity(Gravity.CENTER)
+        times.setTextSize(12)
+        times.setTextColor(0xFF8A7B9C)
+        ttl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                                        LinearLayout.LayoutParams.WRAP_CONTENT)
+        ttl.setMargins(0, dp(2), 0, dp(6))
+        times.setLayoutParams(ttl)
         root.addView(times)
         st["times"] = times
 
-        # controls
+        # ---- controls ----
         ctrl = LinearLayout(ctx)
         ctrl.setOrientation(LinearLayout.HORIZONTAL)
         ctrl.setGravity(Gravity.CENTER)
         cl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                                        LinearLayout.LayoutParams.WRAP_CONTENT)
-        cl.setMargins(0, AndroidUtilities.dp(8), 0, 0)
+        cl.setMargins(0, dp(4), 0, dp(4))
         ctrl.setLayoutParams(cl)
 
-        def cbtn(text, fn):
+        def cbtn(text, fn, size=20):
             b = Button(ctx)
             b.setText(text)
-            b.setTextSize(22)
+            b.setTextSize(size)
             b.setMinWidth(0)
             b.setMinimumWidth(0)
-            b.setPadding(AndroidUtilities.dp(14), 0, AndroidUtilities.dp(14), 0)
+            b.setPadding(dp(10), 0, dp(10), 0)
             b.setOnClickListener(OnClickListener(lambda v, f=fn: self._ui(f)))
             return b
 
+        st["btn_shuffle"] = cbtn("🔀", self._player_toggle_shuffle, 18)
+        ctrl.addView(st["btn_shuffle"])
         ctrl.addView(cbtn("⏮", lambda: self._player_step(-1)))
-        st["btn_play"] = cbtn("▶", self._player_toggle)
-        ctrl.addView(st["btn_play"])
+
+        play_bg = GradientDrawable()
+        play_bg.setShape(GradientDrawable.OVAL)
+        play_bg.setColor(0xFFFF6FA5)
+        play = TextView(ctx)
+        play.setText("▶")
+        play.setTextSize(30)
+        play.setTextColor(0xFFFFFFFF)
+        play.setGravity(Gravity.CENTER)
+        play.setBackground(play_bg)
+        pll = LinearLayout.LayoutParams(dp(76), dp(76))
+        pll.setMargins(dp(18), 0, dp(18), 0)
+        play.setLayoutParams(pll)
+        play.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_toggle)))
+        st["btn_play"] = play
+        ctrl.addView(play)
+
         ctrl.addView(cbtn("⏭", lambda: self._player_step(1)))
+        st["btn_repeat"] = cbtn("🔁", self._player_cycle_repeat, 18)
+        ctrl.addView(st["btn_repeat"])
         root.addView(ctrl)
 
-        # lyrics
+        # ---- lyrics ----
+        lhead = TextView(ctx)
+        lhead.setText("歌词")
+        lhead.setTextSize(14)
+        lhead.setTextColor(0xFF8A7B9C)
+        lhead.setPadding(dp(4), dp(6), dp(4), dp(4))
+        root.addView(lhead)
+
         scroll = ScrollView(ctx)
-        sl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0)
-        sl.setMargins(0, AndroidUtilities.dp(16), 0, 0)
-        scroll.setLayoutParams(sl)
-        lyrics = TextView(ctx)
-        lyrics.setTextColor(0xCCFFFFFF)
-        lyrics.setTextSize(14)
-        lyrics.setGravity(Gravity.CENTER)
-        lyrics.setText("暂无歌词")
-        scroll.addView(lyrics)
-        root.addView(scroll)
-        st["lyrics"] = lyrics
+        sl2 = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0)
+        sl2.setMargins(0, dp(2), 0, 0)
+        scroll.setLayoutParams(sl2)
+        box = LinearLayout(ctx)
+        box.setOrientation(LinearLayout.VERTICAL)
+        box.setGravity(Gravity.CENTER_HORIZONTAL)
+        box.setPadding(dp(8), dp(8), dp(8), dp(8))
+        scroll.addView(box)
+        empty = TextView(ctx)
+        empty.setText("暂无歌词")
+        empty.setTextSize(14)
+        empty.setTextColor(0xFF8A7B9C)
+        empty.setGravity(Gravity.CENTER)
+        box.addView(empty)
+        st["lyrics"] = empty
+        st["lyrics_box"] = box
+        st["lyric_views"] = []
         st["scroll"] = scroll
+        root.addView(scroll)
         return root
+
+    def _make_avatar_thumb(self, ctx):
+        try:
+            from android.graphics import Bitmap, Canvas, Color, Paint, Path, RectF
+            from android.graphics.drawable import BitmapDrawable
+            from org.telegram.ui import AndroidUtilities
+            size = AndroidUtilities.dp(44)
+            bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            c = Canvas(bmp)
+            c.drawColor(Color.TRANSPARENT)
+            cx = size / 2.0
+            cy = size / 2.0
+            r = size * 0.40
+
+            def paint(col):
+                p = Paint()
+                p.setColor(col)
+                p.setAntiAlias(True)
+                return p
+
+            # cat ears
+            ear_pink = paint(0xFFFF9EC7)
+            inner_pink = paint(0xFFFFC7DD)
+            for sx in (-1, 1):
+                p = Path()
+                bx = cx + sx * r * 0.55
+                tipx = cx + sx * r * 0.95
+                tipy = cy - r * 1.15
+                p.moveTo(bx - sx * r * 0.25, cy - r * 0.55)
+                p.lineTo(tipx, tipy)
+                p.lineTo(bx + sx * r * 0.25, cy - r * 0.55)
+                p.close()
+                c.drawPath(p, ear_pink)
+                p2 = Path()
+                p2.moveTo(bx - sx * r * 0.12, cy - r * 0.62)
+                p2.lineTo(cx + sx * r * 0.78, cy - r * 0.95)
+                p2.lineTo(bx + sx * r * 0.12, cy - r * 0.62)
+                p2.close()
+                c.drawPath(p2, inner_pink)
+
+            # face
+            c.drawCircle(cx, cy, r, paint(0xFFFFE0C2))
+            # hair top
+            hair = paint(0xFFFFB7D5)
+            c.drawArc(RectF(cx - r, cy - r * 1.05, cx + r, cy + r * 0.4), 180, 180, True, hair)
+
+            # eyes
+            eye = paint(0xFF4A3B5C)
+            hl = paint(0xFFFFFFFF)
+            for sx in (-1, 1):
+                ex = cx + sx * r * 0.38
+                ey = cy - r * 0.05
+                c.drawOval(RectF(ex - r * 0.16, ey - r * 0.22, ex + r * 0.16, ey + r * 0.22), eye)
+                c.drawCircle(ex - r * 0.06, ey - r * 0.08, r * 0.05, hl)
+            # blush
+            blush = paint(0xFFFF9EBB)
+            for sx in (-1, 1):
+                c.drawCircle(cx + sx * r * 0.62, cy + r * 0.18, r * 0.14, blush)
+            # mouth
+            mouth = paint(0xFFB56576)
+            mouth.setStyle(Paint.Style.STROKE)
+            mouth.setStrokeWidth(size * 0.035)
+            c.drawArc(RectF(cx - r * 0.18, cy + r * 0.05, cx + r * 0.18, cy + r * 0.45), 20, 140, False, mouth)
+
+            return BitmapDrawable(ctx.getResources(), bmp)
+        except Exception:
+            self._report("avatar_thumb")
+            return None
+
+    def _player_on_seek_change(self, prog, from_user):
+        try:
+            st = self._music_state
+            if from_user:
+                st["seeking"] = True
+                # live-update time text while dragging
+                from org.telegram.messenger import MediaController
+                mc = MediaController.getInstance()
+                cur = mc.getPlayingMessageObject()
+                dur = mc.getDuration()
+                if cur is not None and dur > 0:
+                    est = int(dur * prog / 1000)
+                    st["times"].setText("%s / %s" % (self._fmt_ms(est), self._fmt_ms(dur)))
+        except Exception:
+            pass
+
+    def _player_on_seek_stop(self, prog):
+        try:
+            st = self._music_state
+            st["seeking"] = False
+            from org.telegram.messenger import MediaController
+            mc = MediaController.getInstance()
+            cur = mc.getPlayingMessageObject()
+            dur = mc.getDuration()
+            if cur is not None and dur > 0:
+                ms = int(dur * prog / 1000)
+                try:
+                    mc.seekToProgressMs(cur, ms)
+                except Exception:
+                    try:
+                        mc.seekToProgress(cur, prog / 1000.0)
+                    except Exception:
+                        pass
+        except Exception:
+            self._report("player_seek")
+
+    def _player_toggle_shuffle(self):
+        try:
+            from org.telegram.messenger import SharedConfig
+            val = not bool(getattr(SharedConfig, "shuffleMusic", False))
+            SharedConfig.shuffleMusic = val
+            self._music_state["shuffle"] = val
+            self._player_update_toggle_icons()
+        except Exception:
+            # fallback: local shuffle flag only
+            st = self._music_state
+            st["shuffle"] = not bool(st.get("shuffle"))
+            self._player_update_toggle_icons()
+
+    def _player_cycle_repeat(self):
+        st = self._music_state
+        cur = int(st.get("repeat", 1))
+        st["repeat"] = (cur + 1) % 3
+        self._player_update_toggle_icons()
+
+    def _player_update_toggle_icons(self):
+        try:
+            st = self._music_state
+            sh = st.get("btn_shuffle")
+            rp = st.get("btn_repeat")
+            if sh is not None:
+                on = bool(st.get("shuffle")) or self._read_shuffle()
+                st["shuffle"] = on
+                sh.setText("🔀")
+                sh.setTextColor(0xFFFF6FA5 if on else 0xFFB9A8CC)
+            if rp is not None:
+                mode = int(st.get("repeat", 1))
+                rp.setText("🔂" if mode == 2 else "🔁")
+                rp.setTextColor(0xFFFF6FA5 if mode != 0 else 0xFFB9A8CC)
+        except Exception:
+            pass
+
+    def _read_shuffle(self):
+        try:
+            from org.telegram.messenger import SharedConfig
+            return bool(getattr(SharedConfig, "shuffleMusic", False))
+        except Exception:
+            return False
+
+    def _player_restart(self):
+        try:
+            from org.telegram.messenger import MediaController
+            mc = MediaController.getInstance()
+            cur = mc.getPlayingMessageObject()
+            if cur is not None:
+                try:
+                    mc.seekToProgress(cur, 0.0)
+                except Exception:
+                    pass
+                mc.playMessage(cur)
+        except Exception:
+            pass
 
     def _player_load_playing(self):
         try:
@@ -2161,6 +2408,7 @@ class BubbleGlassPlugin(BasePlugin):
             if current is not None:
                 self._player_ensure_playlist(current)
                 self._player_fetch_lyrics(current)
+            self._player_update_toggle_icons()
         except Exception:
             self._report("player_load")
 
@@ -2275,7 +2523,9 @@ class BubbleGlassPlugin(BasePlugin):
             except Exception:
                 pass
             st["artist"].setText(artist)
-            st["btn_play"].setText("⏸" if playing else "▶")
+            play = st.get("btn_play")
+            if play is not None:
+                play.setText("⏸" if playing else "▶")
             pos = dur = 0
             if current is not None:
                 try:
@@ -2283,11 +2533,28 @@ class BubbleGlassPlugin(BasePlugin):
                     dur = mc.getDuration()
                 except Exception:
                     pass
-            if dur > 0:
-                st["prog"].setProgress(int(pos * 1000 / dur))
-            else:
-                st["prog"].setProgress(0)
-            st["times"].setText("%s / %s" % (self._fmt_ms(pos), self._fmt_ms(dur)))
+            seeking = bool(st.get("seeking"))
+            if not seeking:
+                if dur > 0:
+                    st["seek"].setProgress(int(pos * 1000 / dur))
+                else:
+                    st["seek"].setProgress(0)
+                st["times"].setText("%s / %s" % (self._fmt_ms(pos), self._fmt_ms(dur)))
+            # repeat-at-end handling
+            if current is not None and playing and dur > 0:
+                mode = int(st.get("repeat", 1))
+                if pos >= dur - 400:
+                    if not st.get("_end_fired"):
+                        st["_end_fired"] = True
+                        if mode == 2:
+                            self._player_restart()
+                        elif mode == 0:
+                            try:
+                                mc.pauseMessage(current)
+                            except Exception:
+                                pass
+                else:
+                    st["_end_fired"] = False
             self._player_update_lyrics(pos)
         except Exception:
             self._report("player_refresh")
@@ -2329,15 +2596,16 @@ class BubbleGlassPlugin(BasePlugin):
         except Exception:
             pass
         st = self._music_state
-        st["lyrics"] = []
+        st["lyric_lines"] = []
         st["lyric_idx"] = -1
-        view = st.get("lyrics")
-        if view is not None:
-            view.setText("加载歌词…")
+        box = st.get("lyrics_box")
+        if box is not None:
+            self._ui(lambda: self._player_clear_lyrics("加载歌词…"))
 
         def work():
             try:
                 import json
+                import re
                 import urllib.parse
                 import urllib.request
                 q = urllib.parse.urlencode({"track_name": title, "artist_name": artist})
@@ -2352,35 +2620,85 @@ class BubbleGlassPlugin(BasePlugin):
                         ln = ln.strip()
                         if not ln:
                             continue
-                        m = __import__("re").match(r"\[(\d+):(\d+(?:\.\d+)?)\](.*)", ln)
+                        m = re.match(r"\[(\d+):(\d+(?:\.\d+)?)\](.*)", ln)
                         if m:
                             mm = int(m.group(1))
                             ss = float(m.group(2))
                             txt = m.group(3).strip()
                             lines.append((int((mm * 60 + ss) * 1000), txt))
-                text = "\n".join(t for _, t in lines) if lines else (plain or "暂无歌词")
-                self._ui(lambda t=text, ls=lines: self._player_set_lyrics(t, ls))
+                self._ui(lambda ls=lines, pl=plain: self._player_set_lyrics(ls, pl))
             except Exception:
-                self._ui(lambda: self._player_set_lyrics("暂无歌词", []))
+                self._ui(lambda: self._player_set_lyrics([], "暂无歌词"))
         import threading
         threading.Thread(target=work, daemon=True).start()
 
-    def _player_set_lyrics(self, text, lines):
+    def _player_clear_lyrics(self, text):
         try:
+            from android.view import Gravity
             st = self._music_state
-            st["lyrics"] = lines
+            box = st.get("lyrics_box")
+            if box is None:
+                return
+            box.removeAllViews()
+            tv = self._lyric_text_view(text, 0xFF8A7B9C, 14)
+            tv.setGravity(Gravity.CENTER)
+            box.addView(tv)
+            st["lyrics"] = tv
+            st["lyric_views"] = []
+        except Exception:
+            pass
+
+    def _lyric_text_view(self, text, color, size):
+        from android.view import Gravity
+        from android.widget import TextView
+        from org.telegram.ui import AndroidUtilities
+        ctx = self._music_state.get("ctx") or self._music_active_ctx()
+        tv = TextView(ctx)
+        tv.setText(text)
+        tv.setTextSize(size)
+        tv.setTextColor(color)
+        tv.setGravity(Gravity.CENTER)
+        tv.setPadding(AndroidUtilities.dp(4), AndroidUtilities.dp(4), AndroidUtilities.dp(4), AndroidUtilities.dp(4))
+        return tv
+
+    def _music_active_ctx(self):
+        try:
+            from org.telegram.ui import LaunchActivity
+            return LaunchActivity.instance
+        except Exception:
+            return None
+
+    def _player_set_lyrics(self, lines, plain):
+        try:
+            from android.view import Gravity
+            st = self._music_state
+            st["lyric_lines"] = lines or []
             st["lyric_idx"] = -1
-            view = st.get("lyrics")
-            if view is not None:
-                view.setText(text if text else "暂无歌词")
+            box = st.get("lyrics_box")
+            if box is None:
+                return
+            box.removeAllViews()
+            views = []
+            if lines:
+                for ms, txt in lines:
+                    tv = self._lyric_text_view(txt, 0xFF8A7B9C, 15)
+                    box.addView(tv)
+                    views.append(tv)
+            else:
+                tv = self._lyric_text_view(plain or "暂无歌词", 0xFF8A7B9C, 14)
+                tv.setGravity(Gravity.CENTER)
+                box.addView(tv)
+            st["lyrics"] = box.getChildAt(0) if box.getChildCount() > 0 else None
+            st["lyric_views"] = views
         except Exception:
             self._report("player_set_lyrics")
 
     def _player_update_lyrics(self, pos_ms):
         try:
             st = self._music_state
-            lines = st.get("lyrics") or []
-            if not lines:
+            lines = st.get("lyric_lines") or []
+            views = st.get("lyric_views") or []
+            if not lines or not views:
                 return
             idx = -1
             for i, (t, _) in enumerate(lines):
@@ -2388,17 +2706,31 @@ class BubbleGlassPlugin(BasePlugin):
                     idx = i
                 else:
                     break
-            if idx != st.get("lyric_idx"):
-                st["lyric_idx"] = idx
-                scroll = st.get("scroll")
-                view = st.get("lyrics")
-                if scroll is not None and view is not None and idx >= 0:
-                    # simple: scroll to approximate position
-                    try:
-                        line_h = view.getLineHeight() if hasattr(view, "getLineHeight") else 40
-                        scroll.fullScroll(33)  # View.FOCUS_DOWN
-                    except Exception:
-                        pass
+            if idx == st.get("lyric_idx"):
+                return
+            st["lyric_idx"] = idx
+            # recolor
+            for i, tv in enumerate(views):
+                if i == idx:
+                    tv.setTextColor(0xFFFF6FA5)
+                    tv.setTextSize(17)
+                else:
+                    tv.setTextColor(0xFF8A7B9C)
+                    tv.setTextSize(15)
+            # auto-scroll to current line
+            scroll = st.get("scroll")
+            if scroll is not None and 0 <= idx < len(views):
+                try:
+                    v = views[idx]
+                    top = v.getTop()
+                    sh = scroll.getHeight()
+                    lh = v.getHeight()
+                    target = top - (sh - lh) // 2
+                    if target < 0:
+                        target = 0
+                    scroll.smoothScrollTo(0, target)
+                except Exception:
+                    pass
         except Exception:
             pass
 
