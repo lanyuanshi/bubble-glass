@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载、音乐播放器"
 __author__ = "蓝鸢"
-__version__ = "1.6.3"
+__version__ = "1.7.0"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1949,6 +1949,7 @@ class BubbleGlassPlugin(BasePlugin):
     def _music_make_bar(self, st):
         from android.text import TextUtils
         from android.view import Gravity
+        from android.view.animation import Animation, LinearInterpolator, RotateAnimation
         from android.widget import Button, LinearLayout, TextView
         from android_utils import OnClickListener, OnTouchListener
         from org.telegram.messenger import AndroidUtilities
@@ -1964,15 +1965,65 @@ class BubbleGlassPlugin(BasePlugin):
                 pass
         if ctx is None:
             return None
+
         bar = LinearLayout(ctx)
         bar.setOrientation(LinearLayout.HORIZONTAL)
         bar.setGravity(Gravity.CENTER_VERTICAL)
-        bar.setPadding(AndroidUtilities.dp(8), AndroidUtilities.dp(4),
-                       AndroidUtilities.dp(4), AndroidUtilities.dp(4))
+        bar.setPadding(AndroidUtilities.dp(10), AndroidUtilities.dp(6),
+                       AndroidUtilities.dp(6), AndroidUtilities.dp(6))
         try:
-            bar.setBackgroundColor(0xCC1A1C22)
+            from android.graphics.drawable import GradientDrawable
+            gd = GradientDrawable()
+            gd.setColor(0xE61A1C22)
+            gd.setCornerRadius(AndroidUtilities.dp(24))
+            bar.setBackground(gd)
         except Exception:
-            pass
+            try:
+                bar.setBackgroundColor(0xE61A1C22)
+            except Exception:
+                pass
+
+        # spinning disc (tap to play/pause)
+        disc = TextView(ctx)
+        disc.setText("💿")
+        disc.setTextSize(22)
+        disc.setGravity(Gravity.CENTER)
+        dsize = AndroidUtilities.dp(40)
+        dlp = LinearLayout.LayoutParams(dsize, dsize)
+        dlp.setMargins(0, 0, AndroidUtilities.dp(10), 0)
+        disc.setLayoutParams(dlp)
+        disc.setOnClickListener(OnClickListener(lambda v, fn=self._music_toggle: fn()))
+        st["disc"] = disc
+        spin = RotateAnimation(0, 360, Animation.RELATIVE_TO_SELF, 0.5,
+                               Animation.RELATIVE_TO_SELF, 0.5)
+        spin.setDuration(2400)
+        spin.setRepeatCount(Animation.INFINITE)
+        spin.setInterpolator(LinearInterpolator())
+        st["spin"] = spin
+        st["spinning"] = False
+
+        # title + progress column
+        col = LinearLayout(ctx)
+        col.setOrientation(LinearLayout.VERTICAL)
+        col.setGravity(Gravity.CENTER_VERTICAL)
+        clp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
+        title = TextView(ctx)
+        title.setText("音乐播放器")
+        title.setTextColor(0xFFFFFFFF)
+        title.setTextSize(13)
+        title.setSingleLine(True)
+        title.setEllipsize(TextUtils.TruncateAt.END)
+        sub = TextView(ctx)
+        sub.setText("")
+        sub.setTextColor(0x99FFFFFF)
+        sub.setTextSize(11)
+        sub.setSingleLine(True)
+        sub.setEllipsize(TextUtils.TruncateAt.END)
+        col.addView(title)
+        col.addView(sub)
+        col.setLayoutParams(clp)
+        st["title"] = title
+        st["sub"] = sub
 
         def btn(text, on_click):
             b = Button(ctx)
@@ -1985,24 +2036,13 @@ class BubbleGlassPlugin(BasePlugin):
             return b
 
         st["btn_prev"] = btn("⏮", lambda: self._music_step(st, -1))
-        st["btn_play"] = btn("▶", self._music_toggle)
         st["btn_next"] = btn("⏭", lambda: self._music_step(st, 1))
         st["btn_close"] = btn("✕", lambda: self._music_hide(st))
 
-        title = TextView(ctx)
-        title.setText("音乐播放器")
-        title.setTextColor(0xFFFFFFFF)
-        title.setTextSize(13)
-        title.setSingleLine(True)
-        title.setEllipsize(TextUtils.TruncateAt.END)
-        lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
-        title.setLayoutParams(lp)
-        st["title"] = title
-
-        for v in (st["btn_prev"], st["btn_play"], title, st["btn_next"], st["btn_close"]):
+        for v in (disc, col, st["btn_prev"], st["btn_next"], st["btn_close"]):
             bar.addView(v)
 
-        title.setOnTouchListener(OnTouchListener(lambda v, ev: self._music_on_touch(st, v, ev)))
+        col.setOnTouchListener(OnTouchListener(lambda v, ev: self._music_on_touch(st, v, ev)))
         return bar
 
     def _music_on_touch(self, st, view, ev):
@@ -2064,11 +2104,52 @@ class BubbleGlassPlugin(BasePlugin):
             mc = MediaController.getInstance()
             current = mc.getPlayingMessageObject()
             playing = current is not None and not mc.isMessagePaused()
-            title = self._music_title(current) if current is not None else "未在播放"
-            st["title"].setText(title)
-            st["btn_play"].setText("⏸" if playing else "▶")
+            st["title"].setText(self._music_title(current) if current is not None else "未在播放")
+            st["sub"].setText(self._music_sub(mc, current) if current is not None else "轻触磁盘播放")
+            self._music_set_spin(st, playing)
         except Exception:
             self._report("music_refresh")
+
+    def _music_sub(self, mc, current):
+        artist = ""
+        try:
+            artist = current.getMusicPerformer() or ""
+        except Exception:
+            pass
+        try:
+            pos = mc.getProgressMs(current)
+            dur = mc.getDuration()
+        except Exception:
+            pos = dur = 0
+        times = "%s / %s" % (self._fmt_ms(pos), self._fmt_ms(dur))
+        return (artist + "  ·  " + times) if artist else times
+
+    @staticmethod
+    def _fmt_ms(ms):
+        try:
+            ms = int(ms)
+        except Exception:
+            return "0:00"
+        if ms < 0:
+            ms = 0
+        s = ms // 1000
+        return "%d:%02d" % (s // 60, s % 60)
+
+    def _music_set_spin(self, st, spinning):
+        try:
+            disc = st.get("disc")
+            anim = st.get("spin")
+            if disc is None or anim is None:
+                return
+            if st.get("spinning") == spinning:
+                return
+            st["spinning"] = spinning
+            if spinning:
+                disc.startAnimation(anim)
+            else:
+                disc.clearAnimation()
+        except Exception:
+            pass
 
     def _music_start_loop(self, st):
         try:
