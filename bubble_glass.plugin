@@ -1,0 +1,1672 @@
+import os
+import threading
+import time
+
+from base_plugin import BasePlugin, MethodHook
+from ui.settings import Divider, Header, Input, Selector, Switch, Text
+
+try:
+    from ui.settings import Slider
+except ImportError:
+    Slider = None
+
+__id__ = "bubble_glass"
+__name__ = "气泡玻璃"
+__description__ = "聊天气泡透明度 / 模糊 / 浓度可调，内置「晴空」「夜幕」两种玻璃风格；主页 / 联系人 / 设置页各自的壁纸与透明度"
+__author__ = "蓝鸢"
+__version__ = "1.3.2"
+__icon__ = "exteraPlugins/1"
+__category__ = "appearance"
+__permissions__ = ["hooks", "intents", "files"]
+
+STYLE_THEME, STYLE_CLEAR, STYLE_NIGHT, STYLE_AUTO = 0, 1, 2, 3
+STYLE_ITEMS = ["跟随主题", "晴空", "夜幕", "自动（日间晴空 · 夜间夜幕）"]
+
+HOME_OFF, HOME_IMAGE, HOME_CHAT = 0, 1, 2
+HOME_ITEMS = ["关闭", "自定义图片", "跟随聊天壁纸"]
+HOME_MAX_SIDE = 2560
+
+# contact groups
+GROUPS_DEFAULT = "家人,朋友,工作"
+UNGROUPED, HIDDEN_GROUP = "未分类", "已隐藏"
+CG_USER_CELL, CG_GRAY_CELL = 0, 2
+CG_ADAPTER = "org.telegram.ui.Adapters.ContactsAdapter"
+# (key, label, fragment class, image picker request code)
+PAGES = (
+    ("home", "主页", "org.telegram.ui.DialogsActivity", 26471),
+    ("contacts", "联系人", "org.telegram.ui.ContactsActivity", 26472),
+    ("settings", "设置", "org.telegram.ui.SettingsActivity", 26473),
+)
+PAGE_INFO = {p[0]: p for p in PAGES}
+PAGE_BY_CLASS = {p[2]: p[0] for p in PAGES}
+PAGE_HINTS = {
+    "home": "对话列表、顶栏和文件夹标签盖在壁纸上的那层底色有多透。",
+    "contacts": "联系人列表底色和卡片有多透。",
+    "settings": "设置页底色和卡片有多透。",
+}
+HOME_GLASS_PANELS = (
+    "org.telegram.ui.Components.FilterTabsView",
+    "org.telegram.ui.Components.DialogsActivityTopPanelLayout",
+)
+
+DEFAULTS = {
+    "enabled": True,
+    "style": STYLE_AUTO,
+    "transparency": 35,
+    "blur": 12,
+    "density": 55,
+    "outline": True,
+    "home_mode": 0,
+    "home_transparency": 60,
+    "contacts_mode": 0,
+    "contacts_transparency": 60,
+    "settings_mode": 0,
+    "settings_transparency": 60,
+}
+
+PRESETS = {
+    STYLE_CLEAR: {"style": STYLE_CLEAR, "transparency": 30, "blur": 14, "density": 60},
+    STYLE_NIGHT: {"style": STYLE_NIGHT, "transparency": 20, "blur": 16, "density": 70},
+}
+
+# (incoming tint, outgoing tint, outline color)
+TINTS = {
+    STYLE_CLEAR: (0xFFFFFFFF, 0xFFD6ECFF, 0x80FFFFFF),
+    STYLE_NIGHT: (0xFF1A1C22, 0xFF14304F, 0x33FFFFFF),
+}
+THEME_OUTLINE = 0x40FFFFFF
+
+# Used only when the client has no Slider control (stock exteraGram).
+PERCENT_STEPS = list(range(0, 101, 10))
+BLUR_STEPS = [0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 21, 25]
+SLIDERS = {
+    "transparency": ("透明度", "0 = 原样不透明，100 = 完全透明", "msg_blur_off", 0, 100, PERCENT_STEPS),
+    "blur": ("模糊", "气泡背后壁纸的模糊半径，0 = 不模糊", "msg_photo_blur", 0, 25, BLUR_STEPS),
+    "density": ("浓度", "磨砂层的浓度，越高越像毛玻璃", "msg_colors", 0, 100, PERCENT_STEPS),
+    "home_transparency": ("主页透明度", "0 = 看不到壁纸，100 = 壁纸完全露出", "msg_blur_off", 0, 100,
+                          PERCENT_STEPS),
+    "contacts_transparency": ("联系人页透明度", "0 = 看不到壁纸，100 = 壁纸完全露出", "msg_blur_off", 0, 100,
+                              PERCENT_STEPS),
+    "settings_transparency": ("设置页透明度", "0 = 看不到壁纸，100 = 壁纸完全露出", "msg_blur_off", 0, 100,
+                              PERCENT_STEPS),
+}
+
+BACKDROP_SCALE = 1.0 / 6.0
+BACKDROP_CHECK_INTERVAL = 0.3
+BACKDROP_MIN_REBUILD_INTERVAL = 0.5
+
+
+def _signed(color):
+    return color - 0x100000000 if color > 0x7FFFFFFF else color
+
+
+def _with_alpha(color, alpha):
+    return _signed((max(0, min(255, int(alpha))) << 24) | (color & 0x00FFFFFF))
+
+
+def _java_class(name):
+    from java.lang import Class
+    from org.telegram.messenger import ApplicationLoader
+    return Class.forName(name, False, ApplicationLoader.applicationContext.getClassLoader())
+
+
+class _DrawHook(MethodHook):
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def before_hooked_method(self, param):
+        self.plugin._before_draw(param)
+
+    def after_hooked_method(self, param):
+        self.plugin._after_draw(param)
+
+
+class _ShadowHook(MethodHook):
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def after_hooked_method(self, param):
+        if self.plugin._active():
+            param.setResult(None)
+
+
+class _VisibleHook(MethodHook):
+    def __init__(self, plugin):
+        self.plugin = plugin
+
+    def after_hooked_method(self, param):
+        self.plugin._on_visible(param)
+
+
+class _Hook(MethodHook):
+    def __init__(self, before=None, after=None):
+        self._before = before
+        self._after = after
+
+    def before_hooked_method(self, param):
+        if self._before is not None:
+            self._before(param)
+
+    def after_hooked_method(self, param):
+        if self._after is not None:
+            self._after(param)
+
+
+class BubbleGlassPlugin(BasePlugin):
+    def on_plugin_load(self):
+        from android.graphics import Matrix, Paint
+
+        self._cfg = dict(DEFAULTS)
+        self._reported = set()
+        self._layers = []
+        self._frost_paint = Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG)
+        self._tint_paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        self._stroke_paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        self._stroke_paint.setStyle(Paint.Style.STROKE)
+        self._matrix = Matrix()
+        self._bd_shader = None
+        self._bd_base = None
+        self._bd_key = None
+        self._bd_checked = 0.0
+        self._bd_built = 0.0
+        self._is_out_field = None
+        self._bg_view = None
+        self._bd_gen = 0
+        self._list_off = (0, 0)
+        self._cell_state = {}
+        self._views = {}
+        self._frags = {}
+        self._cache = {}
+        self._bitmaps = {}
+        self._gen = {}
+        self._fade_saves = []
+        self._card_saves = []
+        self._seen = set()
+        self._bar_classes = set()
+        self._search_bg = None
+        self._reload_cfg()
+
+        try:
+            drawable_cls = _java_class("org.telegram.ui.ActionBar.MessageDrawable")
+            draw = drawable_cls.getDeclaredMethod(
+                "draw", _java_class("android.graphics.Canvas"), _java_class("android.graphics.Paint"))
+            self._is_out_field = drawable_cls.getDeclaredField("isOut")
+            self._is_out_field.setAccessible(True)
+            self.hook_method(draw, _DrawHook(self))
+            self.hook_method(drawable_cls.getDeclaredMethod("getShadowDrawable"), _ShadowHook(self))
+        except Exception:
+            self._log_error("Failed to hook MessageDrawable")
+        try:
+            self.hook_all_methods(_java_class("org.telegram.ui.Cells.ChatMessageCell"),
+                                  "setVisiblePart", _VisibleHook(self))
+        except Exception:
+            self._log_error("Failed to hook ChatMessageCell.setVisiblePart")
+        self._hook_pages()
+        self._cg_init()
+        self._hook_contacts()
+
+    def on_plugin_unload(self):
+        self._cg_unload()
+        self._bd_shader = None
+        self._bg_view = None
+        self._cell_state = {}
+        entries = list(self._views.values())
+        self._views = {}
+        self._frags = {}
+        self._cache = {}
+        self._bitmaps = {}
+
+        def restore():
+            for page, view in entries:
+                self._detach_home(view)
+                try:
+                    self._apply_glass_alpha(page, view, False)
+                except Exception:
+                    pass
+        self._ui(restore)
+
+    # ---------- settings ----------
+
+    def _reload_cfg(self):
+        cfg = {}
+        for key, default in DEFAULTS.items():
+            value = self.get_setting(key, default)
+            if key in SLIDERS and Slider is None:
+                steps = SLIDERS[key][5]
+                idx = self.get_setting(key + "_idx", None)
+                if isinstance(idx, int) and 0 <= idx < len(steps):
+                    value = steps[idx]
+            cfg[key] = value
+        self._apply_cfg(cfg)
+
+    def _apply_cfg(self, cfg):
+        try:
+            self._cfg = {
+                "enabled": bool(cfg["enabled"]),
+                "style": int(cfg["style"]) if 0 <= int(cfg["style"]) < len(STYLE_ITEMS) else STYLE_AUTO,
+                "transparency": max(0.0, min(100.0, float(cfg["transparency"]))),
+                "blur": int(max(0, min(25, float(cfg["blur"])))),
+                "density": max(0.0, min(100.0, float(cfg["density"]))),
+                "outline": bool(cfg["outline"]),
+            }
+            for page in PAGE_INFO:
+                mode = int(cfg[page + "_mode"])
+                self._cfg[page + "_mode"] = mode if 0 <= mode < len(HOME_ITEMS) else HOME_OFF
+                self._cfg[page + "_transparency"] = max(0.0, min(100.0, float(cfg[page + "_transparency"])))
+        except Exception:
+            self._cfg = dict(DEFAULTS)
+
+    def _on_change(self, key, value):
+        cfg = dict(self._cfg)
+        if key.endswith("_idx"):
+            key = key[:-4]
+            value = SLIDERS[key][5][int(value)]
+        cfg[key] = value
+        self._apply_cfg(cfg)
+        page = key.split("_")[0]
+        if page in PAGE_INFO:
+            self._refresh_page(page)
+
+    def _apply_preset(self, style):
+        values = PRESETS[style]
+        for key, value in values.items():
+            self.set_setting(key, value)
+            if key in SLIDERS and Slider is None:
+                steps = SLIDERS[key][5]
+                self.set_setting(key + "_idx", min(range(len(steps)), key=lambda i: abs(steps[i] - value)))
+        self._reload_cfg()
+        self.set_setting("style", values["style"], reload_settings=True)
+
+    def _slider_row(self, key):
+        title, sub, icon, lo, hi, steps = SLIDERS[key]
+        if Slider is not None:
+            return Slider(key=key, text=title, default=DEFAULTS[key], min=lo, max=hi, step=1,
+                          subtext=sub, icon=icon, on_change=lambda v, k=key: self._on_change(k, v))
+        default_idx = min(range(len(steps)), key=lambda i: abs(steps[i] - DEFAULTS[key]))
+        return Selector(key=key + "_idx", text=title, default=default_idx,
+                        items=[str(s) for s in steps], icon=icon,
+                        on_change=lambda v, k=key: self._on_change(k + "_idx", v))
+
+    def create_settings(self):
+        return [
+            Header(text="气泡玻璃"),
+            Switch(key="enabled", text="启用", default=DEFAULTS["enabled"], icon="msg_customize",
+                   on_change=lambda v: self._on_change("enabled", v)),
+            Selector(key="style", text="风格", default=DEFAULTS["style"], items=STYLE_ITEMS,
+                     icon="msg_theme", on_change=lambda v: self._on_change("style", v)),
+            self._slider_row("transparency"),
+            self._slider_row("blur"),
+            self._slider_row("density"),
+            Switch(key="outline", text="玻璃描边", default=DEFAULTS["outline"],
+                   subtext="在气泡边缘画一圈细高光", icon="msg_photo_settings",
+                   on_change=lambda v: self._on_change("outline", v)),
+            Header(text="一键预设"),
+            Text(text="晴空", subtext="明亮通透的浅色毛玻璃", icon="msg_brightness_high",
+                 on_click=lambda *_: self._apply_preset(STYLE_CLEAR)),
+            Text(text="夜幕", subtext="深色低调的暗色玻璃", icon="msg_brightness_low",
+                 on_click=lambda *_: self._apply_preset(STYLE_NIGHT)),
+            Divider(text="模糊取自当前聊天壁纸。改完设置后返回聊天即可看到效果。"),
+        ] + [row for page, _, _, _ in PAGES for row in self._page_rows(page)] + self._cg_rows()
+
+    def _page_rows(self, page):
+        label = PAGE_INFO[page][1]
+        return [
+            Header(text=label),
+            Selector(key=page + "_mode", text=label + "壁纸", default=DEFAULTS[page + "_mode"], items=HOME_ITEMS,
+                     icon="msg_background", on_change=lambda v, k=page + "_mode": self._on_change(k, v)),
+            Text(text="选择图片…", subtext="从相册选一张图作为%s壁纸" % label, icon="msg_gallery",
+                 on_click=lambda *_, pg=page: self._pick_image(pg)),
+            self._slider_row(page + "_transparency"),
+            Divider(text=PAGE_HINTS[page]),
+        ]
+
+    # ---------- page wallpapers (home / contacts / settings) ----------
+
+    @staticmethod
+    def _ui(fn, delay=0):
+        try:
+            from android_utils import run_on_ui_thread
+            run_on_ui_thread(fn, delay)
+        except Exception:
+            fn()
+
+    @staticmethod
+    def _ident(obj):
+        from java.lang import System
+        return System.identityHashCode(obj)
+
+    def _page_on(self, page):
+        return self._cfg[page + "_mode"] != HOME_OFF
+
+    def _page_alpha(self, page):
+        return int(255 * (100.0 - self._cfg[page + "_transparency"]) / 100.0)
+
+    def _page_of(self, view):
+        if view is None or not self._views:
+            return None
+        entry = self._views.get(self._ident(view))
+        return entry[0] if entry is not None else None
+
+    def _try_hook(self, cls_name, method, hook, quiet=False):
+        try:
+            self.hook_all_methods(_java_class(cls_name), method, hook)
+            return True
+        except Exception:
+            if quiet:
+                self._log_info("skip hook %s.%s (not in this build)" % (cls_name, method))
+            else:
+                self._log_error("Failed to hook %s.%s" % (cls_name, method))
+            return False
+
+    def _page_of_parents(self, view, depth=4):
+        # Page that owns `view`, looking a few levels up the view tree.
+        if not self._views:
+            return None
+        for _ in range(depth):
+            if view is None:
+                return None
+            page = self._page_of(view)
+            if page is not None:
+                return page
+            view = view.getParent()
+        return None
+
+    def _hook_pages(self):
+        for page, _, cls_name, _ in PAGES:
+            self._try_hook(cls_name, "createView",
+                           _Hook(after=lambda p, pg=page: self._on_page_created(pg, p)))
+            self._try_hook(cls_name, "onFragmentDestroy", _Hook(before=self._on_page_destroyed))
+        layout = "org.telegram.ui.Components.SizeNotifierFrameLayout"
+        self._try_hook(layout, "getNewDrawable", _Hook(after=self._on_get_new_drawable))
+        self._try_hook(layout, "dispatchDraw", _Hook(before=self._on_layout_draw))
+        self._try_hook(layout, "getNewDrawableMotion", _Hook(after=self._on_get_new_motion))
+        # Action bars with an adaptive background (contacts) go through the base
+        # drawBlurRect() overloads rather than the page's own override.
+        self._try_hook(layout, "drawBlurRect", _Hook(before=self._on_draw_bar), quiet=True)
+        if self._try_hook("org.telegram.ui.DialogsActivity$ContentView", "drawBlurRect",
+                          _Hook(before=self._on_draw_bar)):
+            self._bar_classes.add("org.telegram.ui.DialogsActivity$ContentView")
+        self._try_hook("org.telegram.ui.Components.DialogsActivityTopBubblesFadeView", "onDraw",
+                       _Hook(before=self._before_fade, after=self._after_fade))
+        # Section cards: newer builds draw them in BitmapSectionsItemDecoration,
+        # older ones (13.1.x) in RecyclerListView itself. Either may be missing.
+        self._try_hook("org.telegram.ui.Components.BitmapSectionsItemDecoration", "onDraw",
+                       _Hook(before=self._before_cards, after=self._after_cards), quiet=True)
+        self._try_hook("org.telegram.ui.Components.RecyclerListView", "drawSectionsBackgrounds",
+                       _Hook(before=self._before_list_cards, after=self._after_cards), quiet=True)
+        try:
+            self._search_bg = _java_class(
+                "org.telegram.ui.Components.FragmentSearchField").getDeclaredField("bg")
+            self._search_bg.setAccessible(True)
+            self._try_hook("org.telegram.ui.Components.FragmentSearchField", "dispatchDraw",
+                           _Hook(before=self._on_search_field), quiet=True)
+        except Exception:
+            self._log_info("skip search field (not in this build)")
+        self._try_hook("org.telegram.ui.LaunchActivity", "onActivityResult",
+                       _Hook(before=self._on_activity_result))
+        # Plugins start asynchronously, so these screens usually exist already.
+        self._ui(self._initial_scan)
+
+    def _initial_scan(self):
+        self._scan_pages()
+        for page, _, _, _ in PAGES:
+            if self._page_on(page):
+                self._refresh_page(page)
+
+    def _scan_pages(self):
+        try:
+            from org.telegram.ui import LaunchActivity
+
+            activity = LaunchActivity.instance
+            if activity is None:
+                return
+            layouts = [activity.getActionBarLayout()]
+            for name in ("getLayersActionBarLayout", "getRightActionBarLayout"):
+                try:
+                    layouts.append(getattr(activity, name)())
+                except Exception:
+                    pass
+            for layout in layouts:
+                if layout is None:
+                    continue
+                stack = layout.getFragmentStack()
+                for i in range(stack.size()):
+                    self._scan_fragment(stack.get(i))
+            self._log_info("page views: %s" % sorted(p for p, _ in self._views.values()))
+        except Exception:
+            self._report("scan_pages")
+
+    def _scan_fragment(self, fragment):
+        if fragment is None:
+            return
+        if str(fragment.getClass().getName()) == "org.telegram.ui.MainTabsActivity":
+            try:
+                arr_field = _java_class("org.telegram.ui.ViewPagerActivity").getDeclaredField("fragmentsArr")
+                arr_field.setAccessible(True)
+                frag_field = _java_class("org.telegram.ui.ViewPagerActivity$FragmentState").getDeclaredField("fragment")
+                frag_field.setAccessible(True)
+                arr = arr_field.get(fragment)
+                for j in range(arr.size()):
+                    self._scan_fragment(frag_field.get(arr.valueAt(j)))
+            except Exception:
+                self._report("scan_tabs")
+                self._scan_fragment(fragment.getDialogsActivity())
+            return
+        page = self._page_for_fragment(fragment)
+        if page is not None:
+            self._register(page, fragment, fragment.getFragmentView())
+
+    @staticmethod
+    def _page_for_fragment(fragment):
+        cls = fragment.getClass()
+        for _ in range(3):
+            if cls is None:
+                break
+            page = PAGE_BY_CLASS.get(str(cls.getName()))
+            if page is not None:
+                return page
+            cls = cls.getSuperclass()
+        return None
+
+    def _register(self, page, fragment, view):
+        from java import cast
+        from org.telegram.ui.Components import SizeNotifierFrameLayout
+
+        if view is None or not isinstance(view, SizeNotifierFrameLayout):
+            return None
+        view = cast(SizeNotifierFrameLayout, view)
+        view_id = self._ident(view)
+        self._views[view_id] = (page, view)
+        self._hook_bar(view)
+        if fragment is not None:
+            self._frags[self._ident(fragment)] = view_id
+        return view
+
+    def _hook_bar(self, view):
+        # Each page draws its top bar through its own drawBlurRect() override
+        # (an anonymous class such as ContactsActivity$5), so hook it by instance.
+        try:
+            cls = view.getClass()
+            name = str(cls.getName())
+            if name in self._bar_classes:
+                return
+            self._bar_classes.add(name)
+            if name == "org.telegram.ui.Components.SizeNotifierFrameLayout":
+                return
+            self.hook_all_methods(cls, "drawBlurRect", _Hook(before=self._on_draw_bar))
+        except Exception:
+            self._log_info("skip top bar hook")
+
+    def _on_page_created(self, page, param):
+        try:
+            view = self._register(page, param.thisObject, param.getResult())
+            if view is not None and self._page_on(page):
+                self._attach_home(view)
+                self._apply_glass_alpha(page, view, True)
+        except Exception:
+            self._report("page_created")
+
+    def _on_layout_draw(self, param):
+        # Tab pages (contacts / settings) can be built before the plugin loads and
+        # are not always reachable from the fragment stack, so also pick up their
+        # root layouts by class name (e.g. "org.telegram.ui.SettingsActivity$3").
+        try:
+            view = param.thisObject
+            view_id = self._ident(view)
+            if view_id in self._views or view_id in self._seen:
+                return
+            if len(self._seen) > 2048:
+                self._seen.clear()
+            self._seen.add(view_id)
+            page = PAGE_BY_CLASS.get(str(view.getClass().getName()).split("$")[0])
+            if page is None:
+                return
+            view = self._register(page, None, view)
+            if view is None:
+                return
+            self._log_info("found %s page" % page)
+            if self._page_on(page):
+                def attach():
+                    self._attach_home(view)
+                    self._apply_glass_alpha(page, view, True)
+                self._ui(attach, delay=1)
+        except Exception:
+            self._report("layout_draw")
+
+    def _log_info(self, text):
+        try:
+            self.log(text)
+        except Exception:
+            pass
+
+    def _on_page_destroyed(self, param):
+        try:
+            view_id = self._frags.pop(self._ident(param.thisObject), None)
+            if view_id is not None:
+                self._views.pop(view_id, None)
+        except Exception:
+            self._report("page_destroyed")
+
+    def _on_get_new_drawable(self, param):
+        try:
+            view = param.thisObject
+            page = self._page_of(view)
+            if page is None or not self._page_on(page):
+                return
+            drawable = self._page_drawable_for(page, view)
+            if drawable is not None:
+                param.setResult(drawable)
+        except Exception:
+            self._report("get_new_drawable")
+
+    def _on_get_new_motion(self, param):
+        try:
+            page = self._page_of(param.thisObject)
+            if page is not None and self._page_on(page):
+                param.setResult(False)
+        except Exception:
+            self._report("get_new_motion")
+
+    def _on_draw_bar(self, param):
+        # Home top bar: instead of the opaque theme color (or frosted list capture),
+        # paint the same backdrop so the bar shares the list's transparency.
+        try:
+            if len(param.args) < 5 or not param.args[4]:
+                return
+            view = param.thisObject
+            page = self._page_of(view)
+            if page is None or not self._page_on(page):
+                return
+            self._apply_glass_alpha(page, view, True)
+            drawable = self._page_drawable_for(page, view)
+            if drawable is None:
+                return
+            canvas, rect = param.args[0], param.args[2]
+            canvas.save()
+            canvas.clipRect(rect)
+            canvas.translate(0.0, -float(param.args[1]))
+            drawable.setBounds(0, 0, view.getMeasuredWidth(), view.getRootView().getMeasuredHeight())
+            drawable.draw(canvas)
+            canvas.restore()
+            param.setResult(None)
+        except Exception:
+            self._report("draw_bar")
+
+    def _apply_glass_alpha(self, page, view, on, depth=0):
+        # Folder tabs / top panels / action bar fades are glass drawables whose
+        # source is the solid theme color: fade them to let the backdrop through.
+        from android.view import ViewGroup
+
+        alpha = self._page_alpha(page) if on else 255
+        for i in range(view.getChildCount()):
+            child = view.getChildAt(i)
+            if child is None:
+                continue
+            background = child.getBackground()
+            if background is not None and self._is_glass_panel(child, background):
+                if background.getAlpha() != alpha:
+                    background.setAlpha(alpha)
+                    child.invalidate()
+            elif depth == 0 and isinstance(child, ViewGroup) and \
+                    "RecyclerView" not in str(child.getClass().getName()):
+                self._apply_glass_alpha(page, child, on, depth + 1)
+
+    @staticmethod
+    def _is_glass_panel(child, background):
+        if str(background.getClass().getName()) == "org.telegram.utils.glass.fade.GlassFadeBlurredDrawable":
+            return True
+        cls = child.getClass()
+        for _ in range(2):
+            if cls is None:
+                break
+            if str(cls.getName()) in HOME_GLASS_PANELS:
+                return True
+            cls = cls.getSuperclass()
+        return False
+
+    def _layer_alpha(self, param, page, saves):
+        save = None
+        try:
+            if page is not None and self._page_on(page):
+                alpha = self._page_alpha(page)
+                if alpha <= 0:
+                    param.setResult(None)
+                elif alpha < 255:
+                    canvas = param.args[0]
+                    save = canvas.saveLayerAlpha(0.0, 0.0, float(canvas.getWidth()),
+                                                 float(canvas.getHeight()), alpha)
+        except Exception:
+            self._report("layer_alpha")
+        saves.append(save)
+
+    def _restore_layer(self, param, saves):
+        try:
+            save = saves.pop() if saves else None
+            if save is not None:
+                param.args[0].restoreToCount(save)
+        except Exception:
+            self._report("restore_layer")
+
+    def _before_fade(self, param):
+        page = None
+        try:
+            page = self._page_of(param.thisObject.getParent())
+        except Exception:
+            pass
+        self._layer_alpha(param, page, self._fade_saves)
+
+    def _after_fade(self, param):
+        self._restore_layer(param, self._fade_saves)
+
+    def _before_cards(self, param):
+        # Section cards (contacts / settings) get the page transparency too.
+        page = None
+        try:
+            if self._views and len(param.args) > 1:
+                page = self._page_of_parents(param.args[1].getParent())
+        except Exception:
+            pass
+        self._layer_alpha(param, page, self._card_saves)
+
+    def _on_search_field(self, param):
+        # The search box on contacts / settings is an opaque white pill.
+        try:
+            if not self._views:
+                return
+            field = param.thisObject
+            page = self._page_of_parents(field.getParent())
+            if page is None or page == "home":
+                return
+            background = self._search_bg.get(field)
+            if background is None:
+                return
+            alpha = self._page_alpha(page) if self._page_on(page) else 255
+            if background.getAlpha() != alpha:
+                background.setAlpha(alpha)
+        except Exception:
+            self._report("search_field")
+
+    def _before_list_cards(self, param):
+        page = None
+        try:
+            if self._views:
+                page = self._page_of_parents(param.thisObject.getParent())
+        except Exception:
+            pass
+        self._layer_alpha(param, page, self._card_saves)
+
+    def _after_cards(self, param):
+        self._restore_layer(param, self._card_saves)
+
+    @staticmethod
+    def _attach_home(view):
+        # The placeholder only makes the layout create its background view; the
+        # real drawable is supplied through getNewDrawable() on the next frame.
+        from android.graphics.drawable import ColorDrawable
+        view.setBackgroundImage(ColorDrawable(0), False)
+        view.invalidate()
+
+    @staticmethod
+    def _detach_home(view):
+        try:
+            if view.getBackgroundImage() is not None:
+                view.setBackgroundImage(None, False)
+                view.invalidate()
+        except Exception:
+            pass
+
+    def _invalidate_tree(self, view, depth=0):
+        for i in range(view.getChildCount()):
+            child = view.getChildAt(i)
+            child.invalidate()
+            if depth < 1 and hasattr(child, "getChildCount"):
+                self._invalidate_tree(child, depth + 1)
+
+    def _refresh_page(self, page):
+        self._gen[page] = self._gen.get(page, 0) + 1
+        self._cache.pop(page, None)
+        on = self._page_on(page)
+
+        def apply():
+            if on and not any(p == page for p, _ in self._views.values()):
+                self._scan_pages()
+            for view_page, view in list(self._views.values()):
+                if view_page != page:
+                    continue
+                try:
+                    if on:
+                        self._attach_home(view)
+                    else:
+                        self._detach_home(view)
+                    self._apply_glass_alpha(page, view, on)
+                    self._invalidate_tree(view)
+                except Exception:
+                    self._report("refresh_page")
+        self._ui(apply)
+
+    def _page_drawable_for(self, page, view):
+        from org.telegram.messenger import AndroidUtilities
+        from org.telegram.ui.ActionBar import Theme
+
+        w = view.getMeasuredWidth()
+        h = view.getRootView().getMeasuredHeight()
+        if w <= 0 or h <= 0:
+            w, h = AndroidUtilities.displaySize.x, AndroidUtilities.displaySize.y
+        color = Theme.getColor(Theme.key_windowBackgroundWhite if page == "home"
+                               else Theme.key_windowBackgroundGray)
+        cached = self._cache.get(page)
+        source = None
+        if self._cfg[page + "_mode"] == HOME_CHAT:
+            source = Theme.getCachedWallpaperNonBlocking()
+            if source is None:
+                return cached[1] if cached else None
+        key = (w, h, color, self._gen.get(page, 0), self._ident(source) if source is not None else 0)
+        if cached is not None and cached[0] == key:
+            return cached[1]
+        try:
+            drawable = self._build_page(page, view, w, h, color, source)
+            self._cache[page] = (key, drawable)
+            return drawable
+        except Exception:
+            self._report("build_page")
+            return cached[1] if cached else None
+
+    def _build_page(self, page, view, w, h, color, source):
+        from java import jarray
+        from android.graphics import Bitmap, Canvas, Paint, RectF
+        from android.graphics.drawable import BitmapDrawable, Drawable, LayerDrawable
+
+        bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+        canvas = Canvas(bitmap)
+        canvas.drawColor(_with_alpha(color, 255))
+
+        image = None
+        if self._cfg[page + "_mode"] == HOME_IMAGE:
+            image = self._load_page_bitmap(page)
+        elif source is not None and source.getClass().getName() == "android.graphics.drawable.BitmapDrawable":
+            image = source.getBitmap()
+        if image is not None:
+            bw, bh = image.getWidth(), image.getHeight()
+            scale = max(w / float(bw), h / float(bh))
+            dw, dh = bw * scale, bh * scale
+            left, top = (w - dw) / 2.0, (h - dh) / 2.0
+            canvas.drawBitmap(image, None, RectF(left, top, left + dw, top + dh),
+                              Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG))
+        elif source is not None:
+            old = source.copyBounds()
+            source.setBounds(0, 0, w, h)
+            try:
+                source.draw(canvas)
+            finally:
+                source.setBounds(old)
+
+        canvas.drawColor(_with_alpha(color, self._page_alpha(page)))
+        layer = jarray(Drawable)([BitmapDrawable(view.getResources(), bitmap)])
+        # LayerDrawable (not BitmapDrawable) so the layout stretches it over the
+        # whole view instead of clipping out the action bar area.
+        return LayerDrawable(layer)
+
+    @staticmethod
+    def _page_path(page):
+        from file_utils import get_plugin_dir
+        directory = get_plugin_dir(__id__)
+        return os.path.join(directory, page + "_wallpaper.jpg") if directory else None
+
+    def _load_page_bitmap(self, page):
+        if page in self._bitmaps:
+            return self._bitmaps[page]
+        path = self._page_path(page)
+        if not path or not os.path.exists(path):
+            return None
+        from android.graphics import BitmapFactory
+        self._bitmaps[page] = BitmapFactory.decodeFile(path)
+        return self._bitmaps[page]
+
+    def _pick_image(self, page):
+        try:
+            from android.content import Intent
+            from android_utils import get_activity
+
+            activity = get_activity()
+            if activity is None:
+                return
+            intent = Intent(Intent.ACTION_GET_CONTENT)
+            intent.setType("image/*")
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            label, code = PAGE_INFO[page][1], PAGE_INFO[page][3]
+            activity.startActivityForResult(Intent.createChooser(intent, "选择%s壁纸" % label), code)
+        except Exception:
+            self._report("pick_image")
+            self._bulletin("打开相册失败", error=True)
+
+    @staticmethod
+    def _as_int(value):
+        return value.intValue() if hasattr(value, "intValue") else int(value)
+
+    def _on_activity_result(self, param):
+        try:
+            code = self._as_int(param.args[0])
+            page = next((p for p, _, _, c in PAGES if c == code), None)
+            if page is None:
+                return
+            param.setResult(None)
+            data = param.args[2]
+            if self._as_int(param.args[1]) != -1 or data is None or data.getData() is None:
+                return
+            threading.Thread(target=self._import_image, args=(page, data.getData()), daemon=True).start()
+        except Exception:
+            self._report("activity_result")
+
+    def _import_image(self, page, uri):
+        try:
+            from android.graphics import Bitmap, BitmapFactory
+            from java.io import FileOutputStream
+            from org.telegram.messenger import ApplicationLoader
+
+            resolver = ApplicationLoader.applicationContext.getContentResolver()
+            opts = BitmapFactory.Options()
+            opts.inJustDecodeBounds = True
+            stream = resolver.openInputStream(uri)
+            try:
+                BitmapFactory.decodeStream(stream, None, opts)
+            finally:
+                stream.close()
+            sample = 1
+            while max(opts.outWidth, opts.outHeight) / (sample * 2) >= HOME_MAX_SIDE:
+                sample *= 2
+            opts = BitmapFactory.Options()
+            opts.inSampleSize = sample
+            stream = resolver.openInputStream(uri)
+            try:
+                image = BitmapFactory.decodeStream(stream, None, opts)
+            finally:
+                stream.close()
+            if image is None:
+                raise ValueError("cannot decode image")
+
+            out = FileOutputStream(self._page_path(page))
+            try:
+                image.compress(Bitmap.CompressFormat.JPEG, 92, out)
+            finally:
+                out.close()
+
+            def done():
+                self.set_setting(page + "_mode", HOME_IMAGE)
+                cfg = dict(self._cfg)
+                cfg[page + "_mode"] = HOME_IMAGE
+                self._apply_cfg(cfg)
+                self._bitmaps[page] = image
+                self._refresh_page(page)
+                self._bulletin("%s壁纸已设置" % PAGE_INFO[page][1])
+            self._ui(done)
+        except Exception:
+            self._report("import_image")
+            self._bulletin("读取图片失败", error=True)
+
+    @staticmethod
+    def _bulletin(text, error=False):
+        try:
+            from ui.bulletin import BulletinHelper
+            (BulletinHelper.show_error if error else BulletinHelper.show_success)(text)
+        except Exception:
+            pass
+
+    # ---------- drawing ----------
+
+    def _active(self):
+        cfg = self._cfg
+        return cfg["enabled"] and (cfg["style"] != STYLE_THEME or cfg["transparency"] > 0 or
+                                   (cfg["blur"] > 0 and cfg["density"] > 0))
+
+    # ---------- contact groups ----------
+
+    def _cg_rows(self):
+        return [
+            Header(text="联系人分组"),
+            Switch(key="groups_on_idx", text="启用分组", default="false", icon="msg_folders",
+                   subtext="联系人页按分类分段显示，长按联系人可分类或隐藏",
+                   on_change=lambda v, k="groups_on": (self._cg_switch(k, bool(v)), self._cg_refresh())),
+            Input(key="groups_names", text="分类名称", default=GROUPS_DEFAULT, icon="msg_edit",
+                  subtext="用逗号分隔，按此顺序显示",
+                  on_change=lambda *_: self._cg_names_changed()),
+            Switch(key="groups_show_hidden_idx", text="显示「已隐藏」分组", default="false", icon="msg_archive_hide",
+                   subtext="显示后可长按其中的人取消隐藏",
+                   on_change=lambda v, k="groups_show_hidden": (self._cg_switch(k, bool(v)), self._cg_refresh())),
+            Text(text="展开全部分组", icon="msg_select", on_click=lambda *_: self._cg_expand_all()),
+            Divider(text="开启后，联系人页的长按改为「分类 / 隐藏」菜单；关闭即恢复原样。"),
+        ]
+
+    def _cg_init(self):
+        self._cg_fields = {}
+        self._cg_sections = {}
+        self._cg_adapter = None
+        self._cg_listeners = {}
+        self._cg_touch = {}
+        self._cg_load()
+
+    def _cg_unload(self):
+        adapter = self._cg_adapter
+        self._cg_adapter = None
+        self._cg_sections = {}
+        self._cg_listeners = {}
+        if adapter is not None:
+            def restore():
+                try:
+                    adapter.notifySectionsChanged()
+                    adapter.notifyDataSetChanged()
+                except Exception:
+                    pass
+            self._ui(restore, delay=500)
+
+    def _cg_load(self):
+        import json
+        self._cg = {"map": {}, "hidden": [], "collapsed": []}
+        try:
+            data = self.get_setting("groups_data", "{}") or "{}"
+            if isinstance(data, (str, bytes)):
+                data = json.loads(data)
+            if isinstance(data, dict):
+                for key, default in self._cg.items():
+                    if isinstance(data.get(key), type(default)):
+                        self._cg[key] = data[key]
+        except Exception:
+            self._report("groups_load")
+
+    def _cg_save(self):
+        import json
+        self.set_setting("groups_data", json.dumps(self._cg, ensure_ascii=False))
+        self._cg_refresh()
+
+    def _cg_names(self):
+        raw = self.get_setting("groups_names", GROUPS_DEFAULT) or ""
+        names = []
+        for part in str(raw).replace("，", ",").replace("、", ",").split(","):
+            part = part.strip()
+            if part and part not in names and part not in (UNGROUPED, HIDDEN_GROUP):
+                names.append(part)
+        return names
+
+    @staticmethod
+    def _jval(value):
+        text = str(value)
+        if text.lower() in ("true", "false"):
+            return text.lower() == "true"
+        try:
+            return int(text)
+        except ValueError:
+            return value
+
+    def _cg_raw(self, adapter, name):
+        field = self._cg_fields.get(name)
+        if field is None:
+            field = _java_class(CG_ADAPTER).getDeclaredField(name)
+            field.setAccessible(True)
+            self._cg_fields[name] = field
+        return field.get(adapter)
+
+    def _cg_field(self, adapter, name):
+        return self._jval(self._cg_raw(adapter, name))
+
+    def _cg_bool(self, key):
+        # SDK switches hand back their key with "_idx"; older saves used the plain key.
+        # A stored Java Boolean makes get_setting() fail, so fall back to raw prefs.
+        for k in (key + "_idx", key):
+            value = self.get_setting(k, None)
+            if value is not None:
+                return self._cg_on(value)
+        try:
+            from org.telegram.messenger import ApplicationLoader
+            prefs = ApplicationLoader.applicationContext.getSharedPreferences(
+                "plugin_settings_" + str(__id__), 0)
+            all_prefs = prefs.getAll()
+            for k in (key + "_idx", key):
+                if all_prefs.containsKey(k):
+                    return self._cg_on(all_prefs.get(k))
+        except Exception:
+            pass
+        return False
+
+    def _cg_on(self, value):
+        # A stored Java Boolean makes get_setting() fail and return the default,
+        # so also accept plain booleans / numbers here.
+        import json
+        try:
+            value = json.loads(value) if isinstance(value, (str, bytes)) else value
+        except ValueError:
+            pass
+        if isinstance(value, bool):
+            return value
+        return str(value).lower() in ("true", "1")
+
+    def _cg_switch(self, key, on):
+        # Store booleans as JSON strings: PythonBridge.getSetting casts to String.
+        for k in (key, key + "_idx"):
+            self.set_setting(k, "true" if on else "false")
+
+    def _cg_active(self, adapter):
+        if not self._cg_bool("groups_on"):
+            return False
+        return (self._cg_field(adapter, "onlyUsers") == 0 and not self._cg_field(adapter, "isAdmin")
+                and not self._cg_field(adapter, "isEmptyWithMainTabs"))
+
+    def _cg_build(self, adapter):
+        from org.telegram.messenger import ContactsController, MessagesController, UserConfig
+
+        account = UserConfig.selectedAccount
+        source = None
+        if self._cg_field(adapter, "sortType") == 2:
+            source = self._cg_raw(adapter, "onlineContacts")
+        if source is None:
+            source = ContactsController.getInstance(account).contacts
+        messages = MessagesController.getInstance(account)
+        names = self._cg_names()
+        buckets = {name: [] for name in names + [UNGROUPED, HIDDEN_GROUP]}
+        mapping, hidden = self._cg["map"], set(self._cg["hidden"])
+        for i in range(source.size()):
+            uid = int(source.get(i).user_id)
+            user = messages.getUser(uid)
+            if user is None:
+                continue
+            if uid in hidden:
+                buckets[HIDDEN_GROUP].append(user)
+            else:
+                buckets.get(mapping.get(str(uid), UNGROUPED), buckets[UNGROUPED]).append(user)
+        order = names + [UNGROUPED]
+        if self._cg_bool("groups_show_hidden"):
+            order.append(HIDDEN_GROUP)
+        collapsed = set(self._cg["collapsed"])
+        return [(name, buckets[name], name in collapsed) for name in order
+                if buckets[name] or name in names]
+
+    def _hook_contacts(self):
+        for method, fn in (("getSectionCount", self._cg_section_count), ("getCountForSection", self._cg_count),
+                           ("getItemViewType", self._cg_view_type), ("getItem", self._cg_item),
+                           ("isEnabled", self._cg_enabled_row), ("getSectionHeaderView", self._cg_header_view),
+                           ("getLetter", self._cg_letter)):
+            self._try_hook(CG_ADAPTER, method, _Hook(after=fn), quiet=True)
+        self._try_hook(CG_ADAPTER, "onBindViewHolder", _Hook(before=self._cg_bind), quiet=True)
+        self._try_hook("org.telegram.ui.ContactsActivity", "showOrUpdateActionMode",
+                       _Hook(before=self._cg_long_press), quiet=True)
+        # RecyclerListView runs its own gesture detector that swallows long-presses
+        # before the header cell's view listener can fire, so track them here.
+        self._try_hook("org.telegram.ui.Components.RecyclerListView", "dispatchTouchEvent",
+                       _Hook(before=self._cg_touch_event), quiet=True)
+
+    def _cg_section_count(self, param):
+        try:
+            adapter = param.thisObject
+            if not self._cg_active(adapter):
+                self._cg_sections.pop(self._ident(adapter), None)
+                return
+            sections = self._cg_build(adapter)
+            self._cg_sections = {self._ident(adapter): sections}
+            self._cg_adapter = adapter
+            param.setResult(1 + len(sections))
+        except Exception:
+            self._report("groups_sections")
+
+    def _cg_of(self, param, section):
+        sections = self._cg_sections.get(self._ident(param.thisObject))
+        if not sections or section < 1 or section > len(sections):
+            return None
+        return sections[section - 1]
+
+    def _cg_count(self, param):
+        try:
+            entry = self._cg_of(param, int(param.args[0]))
+            if entry is not None:
+                param.setResult(1 if entry[2] else 1 + len(entry[1]))
+        except Exception:
+            self._report("groups_rows")
+
+    def _cg_view_type(self, param):
+        try:
+            if len(param.args) != 2:
+                return
+            entry = self._cg_of(param, int(param.args[0]))
+            if entry is not None:
+                param.setResult(CG_GRAY_CELL if int(param.args[1]) == 0 else CG_USER_CELL)
+        except Exception:
+            self._report("groups_view_type")
+
+    def _cg_item(self, param):
+        try:
+            if len(param.args) != 2:
+                return
+            entry = self._cg_of(param, int(param.args[0]))
+            if entry is None:
+                return
+            pos = int(param.args[1])
+            if pos == 0:
+                param.setResult("Header")
+            else:
+                param.setResult(entry[1][pos - 1] if pos - 1 < len(entry[1]) else None)
+        except Exception:
+            self._report("groups_item")
+
+    def _cg_enabled_row(self, param):
+        try:
+            if len(param.args) != 3:
+                return
+            entry = self._cg_of(param, int(param.args[1]))
+            if entry is not None:
+                param.setResult(int(param.args[2]) > 0)
+        except Exception:
+            self._report("groups_enabled")
+
+    def _cg_header_view(self, param):
+        try:
+            entry = self._cg_of(param, int(param.args[0]))
+            view = param.getResult()
+            if entry is not None and view is not None:
+                from java import cast
+                from org.telegram.ui.Cells import LetterSectionCell
+                cast(LetterSectionCell, view).setLetter("")
+        except Exception:
+            self._report("groups_header")
+
+    def _cg_letter(self, param):
+        try:
+            if self._cg_sections.get(self._ident(param.thisObject)):
+                param.setResult(None)
+        except Exception:
+            self._report("groups_letter")
+
+    def _cg_bind(self, param):
+        try:
+            if len(param.args) != 3:
+                return
+            section, pos, holder = int(param.args[0]), int(param.args[1]), param.args[2]
+            entry = self._cg_of(param, section)
+            if entry is None:
+                return
+            from java import cast
+            name, users, collapsed = entry
+            if pos == 0:
+                from android_utils import OnClickListener
+                from org.telegram.ui.Cells import GraySectionCell
+                cell = cast(GraySectionCell, holder.itemView)
+                # GraySectionCell is excluded from the section cards and has its own
+                # opaque gray background: drop it so the page wallpaper shows through.
+                try:
+                    cell.setNoBackground(True)
+                except Exception:
+                    pass
+                # 32dp headers are easy to mis-tap into the neighbour group.
+                try:
+                    cell.setLayerHeight(44)
+                except Exception:
+                    pass
+                listener = self._cg_listeners.get(name)
+                if listener is None:
+                    listener = OnClickListener(lambda v, n=name: self._cg_toggle(n))
+                    self._cg_listeners[name] = listener
+                cell.setText("%s · %d" % (name, len(users)), "展开" if collapsed else "收起", listener)
+                cell.setOnClickListener(listener)
+                # The full-width textView inside the cell is clickable and consumes
+                # touches before they reach the cell, so listen there too.
+                try:
+                    text_view = cell.getTextView()
+                    if text_view is not None:
+                        text_view.setOnClickListener(listener)
+                except Exception:
+                    pass
+            elif pos - 1 < len(users):
+                from org.telegram.ui.Cells import UserCell
+                cell = cast(UserCell, holder.itemView)
+                cell.setAvatarPadding(7, 1)
+                cell.setData(users[pos - 1], None, None, 0)
+                cell.setChecked(False, False)
+            param.setResult(None)
+        except Exception:
+            self._report("groups_bind")
+
+    def _cg_names_changed(self):
+        try:
+            self._exteraless_drop_settings_cache()
+        except Exception:
+            pass
+        self._cg_refresh()
+
+    def _cg_touch_event(self, param):
+        # Watch touches on the contacts list: a stationary press on a group header
+        # for ~0.6s opens the header menu (the list's own long-press ignores headers).
+        try:
+            if len(param.args) != 1:
+                return
+            from java.lang import System
+
+            view = param.thisObject
+            event = param.args[0]
+            action = int(event.getActionMasked())
+            ident = System.identityHashCode(view)
+            state = self._cg_touch.get(ident)
+            if action == 0:
+                adapter = view.getAdapter()
+                sections = self._cg_sections.get(self._ident(adapter)) if adapter is not None else None
+                if not sections:
+                    self._cg_touch.pop(ident, None)
+                    return
+                x, y = float(event.getX()), float(event.getY())
+                self._cg_touch[ident] = [0, x, y]
+                generation = 0
+                from android_utils import run_on_ui_thread
+
+                def fire(v=view, i=ident, g=generation, fx=x, fy=y):
+                    cur = self._cg_touch.get(i)
+                    if cur is not None and cur[0] == g:
+                        self._cg_touch.pop(i, None)
+                        self._cg_header_long_press(v, fx, fy)
+
+                run_on_ui_thread(fire, 600)
+            elif state is not None:
+                if action == 2:
+                    if abs(float(event.getX()) - state[1]) > 48 or abs(float(event.getY()) - state[2]) > 48:
+                        state[0] += 1
+                elif action in (1, 3):
+                    state[0] += 1
+        except Exception:
+            self._report("groups_touch")
+
+    def _cg_header_long_press(self, view, x, y):
+        try:
+            child = view.findChildViewUnder(x, y)
+            cell = child
+            while cell is not None and "GraySectionCell" not in str(cell.getClass().getName()):
+                parent = cell.getParent()
+                if parent is None or parent is view:
+                    cell = None
+                    break
+                cell = parent
+            if cell is None:
+                return
+            adapter = view.getAdapter()
+            if adapter is None:
+                return
+            flat = int(view.getChildAdapterPosition(cell))
+            if flat < 0:
+                return
+            section = int(adapter.getSectionForPosition(flat))
+            if section < 1 or int(adapter.getPositionInSectionForPosition(flat)) != 0:
+                return
+            sections = self._cg_sections.get(self._ident(adapter))
+            entry = sections[section - 1] if sections and 0 <= section - 1 < len(sections) else None
+            if entry is not None:
+                self._cg_header_menu(entry[0], view.getContext())
+        except Exception:
+            self._report("groups_header_long")
+
+    def _cg_header_menu(self, name, context=None):
+        # Long-press on a category header: collapse/expand or move it up/down.
+        try:
+            from ui.alert import AlertDialogBuilder
+            from android_utils import get_activity
+
+            names = self._cg_names()
+            collapsed = name in self._cg["collapsed"]
+            items = ["展开" if collapsed else "收起"]
+            index = names.index(name) if name in names else -1
+            if index > 0:
+                items.append("上移")
+            if 0 <= index < len(names) - 1:
+                items.append("下移")
+
+            def on_pick(builder, which):
+                action = items[int(which)]
+                if action in ("收起", "展开"):
+                    self._cg_toggle(name)
+                elif action == "上移":
+                    self._cg_move(name, -1)
+                else:
+                    self._cg_move(name, 1)
+
+            AlertDialogBuilder(context if context is not None else get_activity()).set_title(name) \
+                .set_items(items, on_pick).set_negative_button("取消").show()
+        except Exception:
+            self._report("groups_header_menu")
+        return True
+
+    def _cg_move(self, name, delta):
+        names = self._cg_names()
+        try:
+            index = names.index(name)
+        except ValueError:
+            return
+        other = index + delta
+        if not 0 <= other < len(names):
+            return
+        names[index], names[other] = names[other], names[index]
+        self.set_setting("groups_names", ",".join(names), reload_settings=True)
+        self._cg_refresh()
+
+    def _cg_toggle(self, name):
+        collapsed = self._cg["collapsed"]
+        if name in collapsed:
+            collapsed.remove(name)
+        else:
+            collapsed.append(name)
+        self._cg_save()
+
+    def _cg_expand_all(self):
+        self._cg["collapsed"] = []
+        self._cg_save()
+
+    def _cg_refresh(self):
+        adapter = self._cg_adapter
+        if adapter is None:
+            return
+
+        def run():
+            try:
+                adapter.notifySectionsChanged()
+                adapter.notifyDataSetChanged()
+            except Exception:
+                self._report("groups_refresh")
+        self._ui(run)
+
+    def _cg_long_press(self, param):
+        try:
+            cell = param.args[0]
+            if cell is None or "UserCell" not in str(cell.getClass().getName()):
+                return
+            adapter = self._cg_adapter
+            if adapter is None or not self._cg_sections or not self._cg_active(adapter):
+                return
+            from java import cast
+            from org.telegram.ui.Cells import UserCell
+            uid = int(cast(UserCell, cell).getDialogId())
+            if uid <= 0:
+                return
+            param.setResult(None)
+            self._cg_dialog(param.thisObject, uid)
+        except Exception:
+            self._report("groups_long_press")
+
+    def _cg_dialog(self, fragment, uid):
+        from ui.alert import AlertDialogBuilder
+        from org.telegram.messenger import MessagesController, UserConfig, UserObject
+
+        user = MessagesController.getInstance(UserConfig.selectedAccount).getUser(uid)
+        title = str(UserObject.getUserName(user)) if user is not None else str(uid)
+        names = self._cg_names()
+        current = self._cg["map"].get(str(uid))
+        hidden = uid in self._cg["hidden"]
+        items = [("✓ " if n == current else "") + n for n in names]
+        items += ["新建分类…", "取消隐藏" if hidden else "隐藏此人"]
+        if current:
+            items.append("移出「%s」" % current)
+
+        def on_pick(builder, which):
+            which = int(which)
+            if which < len(names):
+                self._cg_assign(uid, names[which])
+            elif which == len(names):
+                self._cg_new_group(fragment, uid)
+            elif which == len(names) + 1:
+                self._cg_hide(uid, not hidden)
+            else:
+                self._cg_assign(uid, None)
+
+        AlertDialogBuilder(fragment.getParentActivity()).set_title(title) \
+            .set_items(items, on_pick).set_negative_button("取消").show()
+
+    def _cg_assign(self, uid, name):
+        key = str(uid)
+        if name is None:
+            self._cg["map"].pop(key, None)
+        else:
+            self._cg["map"][key] = name
+        if uid in self._cg["hidden"]:
+            self._cg["hidden"].remove(uid)
+        self._cg_save()
+
+    def _cg_hide(self, uid, hide):
+        hidden = self._cg["hidden"]
+        if hide and uid not in hidden:
+            hidden.append(uid)
+        elif not hide and uid in hidden:
+            hidden.remove(uid)
+        self._cg_save()
+
+    def _cg_new_group(self, fragment, uid):
+        from ui.alert import AlertDialogBuilder
+        from android.widget import EditText
+
+        context = fragment.getParentActivity()
+        edit = EditText(context)
+        try:
+            from org.telegram.messenger import AndroidUtilities
+            from org.telegram.ui.ActionBar import Theme
+            edit.setHint("分类名称")
+            edit.setSingleLine(True)
+            edit.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
+            edit.setHintTextColor(Theme.getColor(Theme.key_dialogTextHint))
+            pad = int(AndroidUtilities.dp(20))
+            edit.setPadding(pad, pad // 2, pad, pad // 2)
+        except Exception:
+            pass
+
+        def ok(builder, which):
+            name = str(edit.getText().toString()).strip().replace(",", " ").replace("，", " ")
+            if not name or name in (UNGROUPED, HIDDEN_GROUP):
+                return
+            names = self._cg_names()
+            if name not in names:
+                names.append(name)
+                self.set_setting("groups_names", ",".join(names), reload_settings=True)
+            self._cg_assign(uid, name)
+
+        AlertDialogBuilder(context).set_title("新建分类").set_view(edit) \
+            .set_positive_button("确定", ok).set_negative_button("取消").show()
+
+    def _report(self, tag):
+        if tag not in self._reported:
+            self._reported.add(tag)
+            self._log_error("bubble_glass error in %s" % tag)
+
+    def _log_error(self, msg):
+        # Older exteraless SDKs have no `logger`, so stick to log() / stderr.
+        import traceback
+        text = "%s\n%s" % (msg, traceback.format_exc())
+        try:
+            self.log(text)
+        except Exception:
+            print("[bubble_glass] " + text)
+
+    def _style(self):
+        style = self._cfg["style"]
+        if style == STYLE_AUTO:
+            from org.telegram.ui.ActionBar import Theme
+            return STYLE_NIGHT if Theme.isCurrentThemeDark() else STYLE_CLEAR
+        return style
+
+    @staticmethod
+    def _should_handle(param):
+        if param.args[1] is not None:
+            return None
+        canvas = param.args[0]
+        if canvas is None or not canvas.isHardwareAccelerated():
+            return None
+        return canvas
+
+    def _before_draw(self, param):
+        try:
+            if not self._active():
+                return
+            canvas = self._should_handle(param)
+            if canvas is None:
+                return
+            cfg = self._cfg
+            d = param.thisObject
+            base_alpha = d.paint.getAlpha() / 255.0
+            if base_alpha <= 0:
+                return
+            style = self._style()
+
+            if cfg["blur"] > 0 and cfg["density"] > 0:
+                shader = self._backdrop()
+                if shader is not None:
+                    self._matrix.set(self._bd_base)
+                    off_x, off_y = self._list_off
+                    self._matrix.postTranslate(float(-off_x), float(-(d.getTopY() + off_y)))
+                    shader.setLocalMatrix(self._matrix)
+                    self._frost_paint.setShader(shader)
+                    self._frost_paint.setAlpha(int(255 * base_alpha * cfg["density"] / 100.0))
+                    d.draw(canvas, self._frost_paint)
+
+            opacity = (100.0 - cfg["transparency"]) / 100.0
+            if style == STYLE_THEME:
+                if opacity >= 1.0:
+                    self._layers.append(-1)
+                elif opacity <= 0.0:
+                    self._draw_outline(d, canvas, THEME_OUTLINE, base_alpha)
+                    param.setResult(None)
+                else:
+                    b = d.getBounds()
+                    self._layers.append(canvas.saveLayerAlpha(
+                        float(b.left), float(b.top), float(b.right), float(b.bottom), int(255 * opacity)))
+                return
+
+            tint_in, tint_out, outline = TINTS[style]
+            if opacity > 0:
+                tint = tint_out if self._is_out_field.getBoolean(d) else tint_in
+                self._tint_paint.setColor(_with_alpha(tint, 255 * base_alpha * opacity))
+                d.draw(canvas, self._tint_paint)
+            self._draw_outline(d, canvas, outline, base_alpha)
+            param.setResult(None)
+        except Exception:
+            self._report("before_draw")
+
+    def _after_draw(self, param):
+        try:
+            if not self._layers or self._should_handle(param) is None:
+                return
+            save_count = self._layers.pop()
+            canvas = param.args[0]
+            if save_count >= 0:
+                canvas.restoreToCount(save_count)
+            self._draw_outline(param.thisObject, canvas, THEME_OUTLINE, param.thisObject.paint.getAlpha() / 255.0)
+        except Exception:
+            self._layers = []
+            self._report("after_draw")
+
+    def _draw_outline(self, d, canvas, color, base_alpha):
+        if not self._cfg["outline"]:
+            return
+        from org.telegram.messenger import AndroidUtilities
+        self._stroke_paint.setStrokeWidth(max(1.0, AndroidUtilities.dp(0.66)))
+        self._stroke_paint.setColor(_with_alpha(color, ((color >> 24) & 0xFF) * base_alpha))
+        d.draw(canvas, self._stroke_paint)
+
+    # ---------- keep frosted layer pinned to the wallpaper while scrolling ----------
+
+    def _on_visible(self, param):
+        # RecyclerView scrolls by moving cached display lists, so a cell's bubble
+        # isn't redrawn and the baked-in blur would slide along with it.
+        try:
+            if not self._active() or self._cfg["blur"] <= 0 or self._cfg["density"] <= 0:
+                return
+            from java import jarray, jint
+            from java.lang import System
+
+            cell = param.thisObject
+            parent = cell.getParent()
+            if parent is not None:
+                loc = jarray(jint)(2)
+                parent.getLocationInWindow(loc)
+                px, py = loc[0], loc[1]
+                bx = by = 0
+                view = self._bg_view
+                if view is not None and view.isAttachedToWindow():
+                    view.getLocationInWindow(loc)
+                    bx, by = loc[0], loc[1]
+                self._list_off = (px - bx, py - by)
+            state = (cell.getTop(), self._list_off, self._bd_gen)
+            key = System.identityHashCode(cell)
+            if self._cell_state.get(key) != state:
+                if len(self._cell_state) > 256:
+                    self._cell_state.clear()
+                self._cell_state[key] = state
+                cell.invalidate()
+        except Exception:
+            self._report("on_visible")
+
+    # ---------- blurred wallpaper ----------
+
+    def _current_background(self):
+        from org.telegram.messenger import AndroidUtilities
+        from org.telegram.ui import LaunchActivity
+        from org.telegram.ui.ActionBar import Theme
+
+        try:
+            fragment = LaunchActivity.getLastFragment()
+            get_content_view = getattr(fragment, "getContentView", None) if fragment is not None else None
+            view = get_content_view() if get_content_view is not None else None
+            if view is not None and view.getMeasuredWidth() > 0:
+                drawable = view.getBackgroundImage()
+                if drawable is not None:
+                    self._bg_view = view
+                    return drawable, view.getMeasuredWidth(), view.getRootView().getMeasuredHeight()
+        except Exception:
+            self._report("current_background")
+        drawable = Theme.getCachedWallpaperNonBlocking()
+        if drawable is None:
+            return None
+        self._bg_view = None
+        return drawable, AndroidUtilities.displaySize.x, AndroidUtilities.displaySize.y
+
+    def _backdrop(self):
+        now = time.monotonic()
+        if self._bd_shader is not None and now - self._bd_checked < BACKDROP_CHECK_INTERVAL:
+            return self._bd_shader
+        self._bd_checked = now
+
+        from java.lang import System
+        bg = self._current_background()
+        if bg is None:
+            return self._bd_shader
+        drawable, width, height = bg
+        b = drawable.getBounds()
+        key = (System.identityHashCode(drawable), b.left, b.top, b.right, b.bottom,
+               width, height, self._cfg["blur"])
+        if key == self._bd_key:
+            return self._bd_shader
+        if self._bd_shader is not None and now - self._bd_built < BACKDROP_MIN_REBUILD_INTERVAL:
+            return self._bd_shader
+        try:
+            self._build_backdrop(drawable, max(1, width), max(1, height))
+            self._bd_key = key
+            self._bd_built = now
+            self._bd_gen += 1
+        except Exception:
+            self._report("build_backdrop")
+        return self._bd_shader
+
+    def _build_backdrop(self, drawable, width, height):
+        from android.graphics import Bitmap, BitmapShader, Canvas, Matrix, Shader
+        from org.telegram.messenger import Utilities
+
+        bw = max(1, int(width * BACKDROP_SCALE))
+        bh = max(1, int(height * BACKDROP_SCALE))
+        bitmap = Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888)
+        canvas = Canvas(bitmap)
+        canvas.scale(bw / float(width), bh / float(height))
+
+        old_bounds = drawable.copyBounds()
+        if old_bounds.isEmpty():
+            drawable.setBounds(0, 0, width, height)
+        try:
+            drawable.draw(canvas)
+        finally:
+            if old_bounds.isEmpty():
+                drawable.setBounds(old_bounds)
+
+        try:
+            Utilities.stackBlurBitmap(bitmap, int(self._cfg["blur"]))
+        except Exception:
+            self._report("stack_blur")
+
+        base = Matrix()
+        base.setScale(width / float(bw), height / float(bh))
+        self._bd_shader = BitmapShader(bitmap, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        self._bd_base = base
