@@ -14,6 +14,7 @@ exteraless / exteraGram 的 Python 插件（Chaquopy）：给聊天气泡、主�
 - 模糊层固定在壁纸上，聊天列表滚动、键盘弹出时不会跟着气泡漂移
 
 ### 页面壁纸与透明度（主页 / 联系人 / 设置，各自独立）
+设置项分组收纳：主页 / 联系人 / 设置 的壁纸和透明度收在「页面壁纸与透明度」子页面里，主设置页更短。
 - 每页可单独选择壁纸：关闭 / 自定义图片 / 跟随聊天壁纸
 - 每页单独调透明度，作用到底色、圆角卡片、顶栏渐变、搜索框
 - 支持旧版（`RecyclerListView.drawSectionsBackgrounds`）和新版（`BitmapSectionsItemDecoration`）两种卡片绘制方式

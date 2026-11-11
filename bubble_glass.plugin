@@ -291,6 +291,7 @@ class BubbleGlassPlugin(BasePlugin):
     def create_settings(self):
         return [
             Header(text="Frost Evening Verse（霜晚辞）"),
+            Header(text="气泡玻璃"),
             Switch(key="enabled", text="启用", default=DEFAULTS["enabled"], icon="msg_customize",
                    on_change=lambda v: self._on_change("enabled", v)),
             Selector(key="style", text="风格", default=DEFAULTS["style"], items=STYLE_ITEMS,
@@ -307,7 +308,15 @@ class BubbleGlassPlugin(BasePlugin):
             Text(text="夜幕", subtext="深色低调的暗色玻璃", icon="msg_brightness_low",
                  on_click=lambda *_: self._apply_preset(STYLE_NIGHT)),
             Divider(text="模糊取自当前聊天壁纸。改完设置后返回聊天即可看到效果。"),
-        ] + self._ar_rows() + [row for page, _, _, _ in PAGES for row in self._page_rows(page)] + self._cg_rows()
+            Text(text="页面壁纸与透明度", subtext="主页 / 联系人 / 设置 各自的壁纸和透明度",
+                 icon="msg_background", accent=True, create_sub_fragment=self._page_sub_rows),
+        ] + self._cg_rows() + self._ar_rows()
+
+    def _page_sub_rows(self):
+        rows = []
+        for page, _, _, _ in PAGES:
+            rows += self._page_rows(page)
+        return rows
 
     def _page_rows(self, page):
         label = PAGE_INFO[page][1]
