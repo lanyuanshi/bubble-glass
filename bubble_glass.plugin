@@ -12,9 +12,9 @@ except ImportError:
 
 __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
-__description__ = "聊天气泡透明度 / 模糊 / 浓度可调，内置「晴空」「夜幕」两种玻璃风格；主页 / 联系人 / 设置页各自的壁纸与透明度；防撤回并标记被撤回的消息；允许在受保护群组/频道截图和下载"
+__description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.5.0"
+__version__ = "1.5.1"
 __icon__ = "exteraPlugins/1"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
