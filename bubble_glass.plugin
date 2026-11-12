@@ -1,4 +1,5 @@
 import os
+import random
 import threading
 import time
 
@@ -14,7 +15,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.13"
+__version__ = "1.11.14"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -57,6 +58,8 @@ DEFAULTS = {
     "contacts_transparency": 60,
     "settings_mode": 0,
     "settings_transparency": 60,
+    "snow_on": False,
+    "snow_density": 50,
     "allow_noforwards": False,
 }
 
@@ -85,6 +88,8 @@ SLIDERS = {
                               PERCENT_STEPS),
     "settings_transparency": ("设置页透明度", "0 = 看不到壁纸，100 = 壁纸完全露出", "msg_blur_off", 0, 100,
                               PERCENT_STEPS),
+    "snow_density": ("雪花密度", "聊天背景飘落的雪花多少，0 = 几乎看不到", "msg_theme", 0, 100,
+                     PERCENT_STEPS),
 }
 
 BACKDROP_SCALE = 1.0 / 6.0
@@ -203,6 +208,7 @@ class BubbleGlassPlugin(BasePlugin):
         self._hook_pages()
         self._hook_noforwards()
         self._add_main_menu_entry()
+        self._snow_init()
 
     def on_plugin_unload(self):
         self._bd_shader = None
@@ -247,6 +253,8 @@ class BubbleGlassPlugin(BasePlugin):
                 "density": max(0.0, min(100.0, float(cfg["density"]))),
                 "outline": bool(cfg["outline"]),
                 "allow_noforwards": bool(cfg["allow_noforwards"]),
+                "snow_on": bool(cfg.get("snow_on", DEFAULTS["snow_on"])),
+                "snow_density": max(0.0, min(100.0, float(cfg.get("snow_density", DEFAULTS["snow_density"])))),
             }
             for page in PAGE_INFO:
                 mode = int(cfg[page + "_mode"])
@@ -262,6 +270,15 @@ class BubbleGlassPlugin(BasePlugin):
             value = SLIDERS[key][5][int(value)]
         cfg[key] = value
         self._apply_cfg(cfg)
+        if key == "snow_density":
+            self._snow_bitmap = None
+            self._snow_shader = None
+            self._snow_paint = None
+        if key == "snow_on" and getattr(self, "_snow_view", None) is not None:
+            try:
+                self._snow_view.invalidate()
+            except Exception:
+                pass
         page = key.split("_")[0]
         if page in PAGE_INFO:
             self._refresh_page(page)
@@ -308,7 +325,7 @@ class BubbleGlassPlugin(BasePlugin):
             Divider(text="模糊取自当前聊天壁纸。改完设置后返回聊天即可看到效果。"),
             Text(text="页面壁纸与透明度", subtext="主页 / 联系人 / 设置 各自的壁纸和透明度",
                  icon="msg_background", accent=True, create_sub_fragment=self._page_sub_rows),
-        ] + self._ar_rows() + self._nf_rows()
+        ] + self._snow_rows() + self._ar_rows() + self._nf_rows()
 
     def _page_sub_rows(self):
         rows = []
@@ -327,6 +344,111 @@ class BubbleGlassPlugin(BasePlugin):
             self._slider_row(page + "_transparency"),
             Divider(text=PAGE_HINTS[page]),
         ]
+
+    # ---------- snow effect ----------
+
+    def _snow_rows(self):
+        return [
+            Header(text="雪花特效"),
+            Switch(key="snow_on", text="聊天飘雪", default=DEFAULTS["snow_on"], icon="msg_theme",
+                   subtext="在聊天背景上飘落雪花，不影响消息操作",
+                   on_change=lambda v: self._on_change("snow_on", v)),
+            self._slider_row("snow_density"),
+            Divider(text="雪花随聊天滚动/新消息刷新而飘动，空闲时保持静止以省电。"),
+        ]
+
+    def _snow_init(self):
+        try:
+            self._snow_view = None
+            self._snow_view_id = 0
+            self._snow_bitmap = None
+            self._snow_shader = None
+            self._snow_paint = None
+            from android.graphics import Matrix
+            from java.lang import System
+            from android.os import SystemClock
+            self._snow_matrix = Matrix()
+            self._System = System
+            self._SystemClock = SystemClock
+            chat = "org.telegram.ui.ChatActivity"
+            self._try_hook(chat, "createView", _Hook(after=self._on_chat_view), quiet=True)
+            self._try_hook(chat, "onFragmentDestroy", _Hook(before=self._on_chat_destroy), quiet=True)
+        except Exception:
+            self._report("snow_init")
+
+    def _on_chat_view(self, param):
+        try:
+            frag = param.thisObject
+            if frag is None or "ChatActivity" not in frag.getClass().getName():
+                return
+            view = param.getResult()
+            if view is not None:
+                self._snow_view = view
+                self._snow_view_id = self._System.identityHashCode(view)
+                if self._cfg.get("snow_on"):
+                    view.invalidate()
+        except Exception:
+            self._report("snow_view")
+
+    def _on_chat_destroy(self, param):
+        try:
+            frag = param.thisObject
+            if frag is not None and "ChatActivity" in frag.getClass().getName():
+                self._snow_view = None
+                self._snow_view_id = 0
+        except Exception:
+            pass
+
+    def _snow_ensure(self):
+        if self._snow_shader is not None:
+            return True
+        try:
+            from android.graphics import Bitmap, BitmapShader, Canvas, Color, Paint, Shader
+            size = 256
+            density = max(0.0, min(100.0, float(self._cfg.get("snow_density", 50))))
+            count = max(6, int(70 * density / 100.0))
+            bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            c = Canvas(bmp)
+            paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            rnd = random.Random(20261212)
+            for _ in range(count):
+                x = rnd.uniform(2, size - 2)
+                y = rnd.uniform(2, size - 2)
+                r = rnd.uniform(0.8, 2.6)
+                a = rnd.randint(90, 220)
+                paint.setColor(Color.argb(a, 255, 255, 255))
+                c.drawCircle(x, y, r, paint)
+            self._snow_bitmap = bmp
+            self._snow_shader = BitmapShader(bmp, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
+            self._snow_paint = Paint()
+            self._snow_paint.setShader(self._snow_shader)
+            self._snow_paint.setFilterBitmap(True)
+            return True
+        except Exception:
+            self._report("snow_ensure")
+            return False
+
+    def _on_snow_draw(self, param):
+        # Drawn after the chat's own dispatchDraw so snow sits above bubbles.
+        # Tiled bitmap shader = one drawRect per frame, no per-flake Java calls.
+        try:
+            if not self._cfg.get("snow_on") or self._snow_view_id == 0:
+                return
+            if self._System.identityHashCode(param.thisObject) != self._snow_view_id:
+                return
+            canvas = param.args[0]
+            width = float(canvas.getWidth())
+            height = float(canvas.getHeight())
+            if width <= 0 or height <= 0 or not self._snow_ensure():
+                return
+            now = self._SystemClock.uptimeMillis() / 1000.0
+            offset = (now * 26.0) % 256.0
+            self._snow_matrix.reset()
+            self._snow_matrix.setTranslate(0.0, offset)
+            self._snow_shader.setLocalMatrix(self._snow_matrix)
+            canvas.drawRect(0.0, 0.0, width, height, self._snow_paint)
+        except Exception:
+            self._report("snow_draw")
 
     # ---------- anti-recall ----------
 
@@ -523,7 +645,7 @@ class BubbleGlassPlugin(BasePlugin):
             self._try_hook(cls_name, "onFragmentDestroy", _Hook(before=self._on_page_destroyed))
         layout = "org.telegram.ui.Components.SizeNotifierFrameLayout"
         self._try_hook(layout, "getNewDrawable", _Hook(after=self._on_get_new_drawable))
-        self._try_hook(layout, "dispatchDraw", _Hook(before=self._on_layout_draw))
+        self._try_hook(layout, "dispatchDraw", _Hook(before=self._on_layout_draw, after=self._on_snow_draw))
         self._try_hook(layout, "getNewDrawableMotion", _Hook(after=self._on_get_new_motion))
         # Action bars with an adaptive background (contacts) go through the base
         # drawBlurRect() overloads rather than the page's own override.
