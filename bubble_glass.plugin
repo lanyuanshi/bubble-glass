@@ -1,6 +1,5 @@
 import math
 import os
-import random
 import threading
 import time
 
@@ -16,14 +15,13 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.17"
+__version__ = "1.11.18"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
 
 STYLE_THEME, STYLE_CLEAR, STYLE_NIGHT, STYLE_AUTO = 0, 1, 2, 3
 STYLE_ITEMS = ["跟随主题", "晴空", "夜幕", "自动（日间晴空 · 夜间夜幕）"]
-EFFECT_ITEMS = ["雪花", "枫叶", "下雨"]
 
 HOME_OFF, HOME_IMAGE, HOME_CHAT = 0, 1, 2
 HOME_ITEMS = ["关闭", "自定义图片", "跟随聊天壁纸"]
@@ -63,9 +61,8 @@ DEFAULTS = {
     "contacts_transparency": 60,
     "settings_mode": 0,
     "settings_transparency": 60,
-    "snow_on": False,
-    "snow_kind": 0,
-    "snow_density": 50,
+    "wp_anim": False,
+    "wp_anim_speed": 50,
     "allow_noforwards": False,
 }
 
@@ -94,8 +91,8 @@ SLIDERS = {
                               PERCENT_STEPS),
     "settings_transparency": ("设置页透明度", "0 = 看不到壁纸，100 = 壁纸完全露出", "msg_blur_off", 0, 100,
                               PERCENT_STEPS),
-    "snow_density": ("雪花密度", "聊天背景飘落的雪花多少，0 = 几乎看不到", "msg_theme", 0, 100,
-                     PERCENT_STEPS),
+    "wp_anim_speed": ("流动速度", "壁纸光效流动的快慢，越大越快", "msg_theme", 0, 100,
+                      PERCENT_STEPS),
 }
 
 BACKDROP_SCALE = 1.0 / 6.0
@@ -259,10 +256,8 @@ class BubbleGlassPlugin(BasePlugin):
                 "density": max(0.0, min(100.0, float(cfg["density"]))),
                 "outline": bool(cfg["outline"]),
                 "allow_noforwards": bool(cfg["allow_noforwards"]),
-                "snow_on": bool(cfg.get("snow_on", DEFAULTS["snow_on"])),
-                "snow_kind": (lambda k: k if 0 <= k < len(EFFECT_ITEMS) else 0)(
-                    int(cfg.get("snow_kind", DEFAULTS["snow_kind"]))),
-                "snow_density": max(0.0, min(100.0, float(cfg.get("snow_density", DEFAULTS["snow_density"])))),
+                "wp_anim": bool(cfg.get("wp_anim", DEFAULTS["wp_anim"])),
+                "wp_anim_speed": max(0.0, min(100.0, float(cfg.get("wp_anim_speed", DEFAULTS["wp_anim_speed"])))),
             }
             for page in PAGE_INFO:
                 mode = int(cfg[page + "_mode"])
@@ -278,13 +273,9 @@ class BubbleGlassPlugin(BasePlugin):
             value = SLIDERS[key][5][int(value)]
         cfg[key] = value
         self._apply_cfg(cfg)
-        if key in ("snow_density", "snow_kind"):
-            self._snow_bitmap = None
-            self._snow_shader = None
-            self._snow_paint = None
-        if key == "snow_on":
-            targets = list(self._snow_views.values())
-            targets += [v for _, v in self._views.values()]
+        if key == "wp_anim":
+            targets = list(getattr(self, "_snow_views", {}).values())
+            targets += [v for _, v in getattr(self, "_views", {}).values()]
             for view in targets:
                 try:
                     view.invalidate()
@@ -336,7 +327,7 @@ class BubbleGlassPlugin(BasePlugin):
             Divider(text="模糊取自当前聊天壁纸。改完设置后返回聊天即可看到效果。"),
             Text(text="页面壁纸与透明度", subtext="主页 / 联系人 / 设置 各自的壁纸和透明度",
                  icon="msg_background", accent=True, create_sub_fragment=self._page_sub_rows),
-        ] + self._snow_rows() + self._ar_rows() + self._nf_rows()
+        ] + self._fx_rows() + self._ar_rows() + self._nf_rows()
 
     def _page_sub_rows(self):
         rows = []
@@ -358,16 +349,14 @@ class BubbleGlassPlugin(BasePlugin):
 
     # ---------- snow effect ----------
 
-    def _snow_rows(self):
+    def _fx_rows(self):
         return [
-            Header(text="雪花特效"),
-            Switch(key="snow_on", text="全局飘雪", default=DEFAULTS["snow_on"], icon="msg_theme",
-                   subtext="聊天、主页、联系人、设置及插件设置页都飘雪花，不影响操作",
-                   on_change=lambda v: self._on_change("snow_on", v)),
-            Selector(key="snow_kind", text="飘落物", default=DEFAULTS["snow_kind"], items=EFFECT_ITEMS,
-                     icon="msg_colors", on_change=lambda v: self._on_change("snow_kind", v)),
-            self._slider_row("snow_density"),
-            Divider(text="雪花随页面滚动/刷新而飘动，空闲时保持静止以省电。"),
+            Header(text="动态壁纸"),
+            Switch(key="wp_anim", text="流动壁纸光效", default=DEFAULTS["wp_anim"], icon="msg_background",
+                   subtext="聊天、主页、联系人、设置及插件设置页显示缓慢流动的渐变光效",
+                   on_change=lambda v: self._on_change("wp_anim", v)),
+            self._slider_row("wp_anim_speed"),
+            Divider(text="光效持续流动，透明度低，不挡消息内容。"),
         ]
 
     def _snow_init(self):
@@ -395,7 +384,7 @@ class BubbleGlassPlugin(BasePlugin):
 
     def _snow_tick(self):
         try:
-            if self._cfg.get("snow_on"):
+            if self._cfg.get("wp_anim"):
                 targets = list(getattr(self, "_snow_views", {}).values())
                 targets += [v for _, v in getattr(self, "_views", {}).values()]
                 for view in targets:
@@ -424,7 +413,7 @@ class BubbleGlassPlugin(BasePlugin):
             frag_id = self._ident(frag)
             self._snow_views[view_id] = view
             self._snow_frags[frag_id] = view_id
-            if self._cfg.get("snow_on"):
+            if self._cfg.get("wp_anim"):
                 view.invalidate()
         except Exception:
             self._report("snow_view")
@@ -442,41 +431,16 @@ class BubbleGlassPlugin(BasePlugin):
         if self._snow_shader is not None:
             return True
         try:
-            from android.graphics import Bitmap, BitmapShader, Canvas, Color, Paint, Shader
+            from android.graphics import Bitmap, BitmapShader, Canvas, Paint, Shader
             size = 256
-            density = max(0.0, min(100.0, float(self._cfg.get("snow_density", 50))))
-            kind = int(self._cfg.get("snow_kind", 0))
             bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
             c = Canvas(bmp)
-            rnd = random.Random(20261212)
-            if kind == 1:  # 枫叶：emoji 彩色枫叶
+            spots = [(60, 70, 95), (195, 55, 85), (75, 195, 90), (205, 205, 100)]
+            colors = [0x4434E89E, 0x446A5AE0, 0x44A8C8FF, 0x44F48FB1]
+            for (x, y, r), col in zip(spots, colors):
                 paint = Paint(Paint.ANTI_ALIAS_FLAG)
-                count = max(6, int(40 * density / 100.0))
-                for _ in range(count):
-                    paint.setTextSize(rnd.uniform(22, 42))
-                    c.drawText("\U0001F341", rnd.uniform(4, size - 4), rnd.uniform(4, size - 4), paint)
-            elif kind == 2:  # 下雨：细长斜雨丝
-                paint = Paint(Paint.ANTI_ALIAS_FLAG)
-                paint.setStrokeWidth(1.6)
-                count = max(12, int(130 * density / 100.0))
-                for _ in range(count):
-                    x = rnd.uniform(0, size)
-                    y = rnd.uniform(0, size)
-                    length = rnd.uniform(10, 22)
-                    slant = rnd.uniform(-2.5, 2.5)
-                    a = rnd.randint(90, 205)
-                    paint.setColor(Color.argb(a, 170, 205, 255))
-                    c.drawLine(x, y, x + slant, y + length, paint)
-            else:  # 雪花：白色圆点
-                paint = Paint(Paint.ANTI_ALIAS_FLAG)
-                count = max(8, int(55 * density / 100.0))
-                for _ in range(count):
-                    x = rnd.uniform(2, size - 2)
-                    y = rnd.uniform(2, size - 2)
-                    r = rnd.uniform(1.6, 5.4)
-                    a = rnd.randint(120, 245)
-                    paint.setColor(Color.argb(a, 255, 255, 255))
-                    c.drawCircle(x, y, r, paint)
+                paint.setColor(col)
+                c.drawCircle(x, y, r, paint)
             self._snow_bitmap = bmp
             self._snow_shader = BitmapShader(bmp, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
             self._snow_paint = Paint()
@@ -491,7 +455,7 @@ class BubbleGlassPlugin(BasePlugin):
         # Drawn after the chat's own dispatchDraw so snow sits above bubbles.
         # Tiled bitmap shader = one drawRect per frame, no per-flake Java calls.
         try:
-            if not self._cfg.get("snow_on"):
+            if not self._cfg.get("wp_anim"):
                 return
             view_id = self._System.identityHashCode(param.thisObject)
             snow = view_id in self._snow_views
@@ -506,15 +470,9 @@ class BubbleGlassPlugin(BasePlugin):
             if width <= 0 or height <= 0 or not self._snow_ensure():
                 return
             now = self._SystemClock.uptimeMillis() / 1000.0
-            kind = int(self._cfg.get("snow_kind", 0))
-            if kind == 2:
-                speed, sway_amp, sway_freq = 240.0, 0.0, 0.0
-            elif kind == 1:
-                speed, sway_amp, sway_freq = 34.0, 14.0, 0.9
-            else:
-                speed, sway_amp, sway_freq = 46.0, 7.0, 1.3
+            speed = 6.0 + (float(self._cfg.get("wp_anim_speed", 50)) / 100.0) * 60.0
             offset = (now * speed) % 256.0
-            sway = math.sin(now * sway_freq) * sway_amp if sway_amp else 0.0
+            sway = math.sin(now * 0.7) * 5.0
             self._snow_matrix.reset()
             self._snow_matrix.setTranslate(sway, offset)
             self._snow_shader.setLocalMatrix(self._snow_matrix)
