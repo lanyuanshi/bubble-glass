@@ -1,4 +1,3 @@
-import math
 import os
 import threading
 import time
@@ -15,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.18"
+__version__ = "1.11.19"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -35,9 +34,6 @@ PAGES = (
 )
 PAGE_INFO = {p[0]: p for p in PAGES}
 PAGE_BY_CLASS = {p[2]: p[0] for p in PAGES}
-# Pages that get the falling-snow overlay (chat + plugin settings are tracked
-# separately in _snow_views; these three are the tab pages already in _views).
-SNOW_PAGES = ("home", "contacts", "settings")
 PAGE_HINTS = {
     "home": "对话列表、顶栏和文件夹标签盖在壁纸上的那层底色有多透。",
     "contacts": "联系人列表底色和卡片有多透。",
@@ -61,8 +57,6 @@ DEFAULTS = {
     "contacts_transparency": 60,
     "settings_mode": 0,
     "settings_transparency": 60,
-    "wp_anim": False,
-    "wp_anim_speed": 50,
     "allow_noforwards": False,
 }
 
@@ -91,8 +85,6 @@ SLIDERS = {
                               PERCENT_STEPS),
     "settings_transparency": ("设置页透明度", "0 = 看不到壁纸，100 = 壁纸完全露出", "msg_blur_off", 0, 100,
                               PERCENT_STEPS),
-    "wp_anim_speed": ("流动速度", "壁纸光效流动的快慢，越大越快", "msg_theme", 0, 100,
-                      PERCENT_STEPS),
 }
 
 BACKDROP_SCALE = 1.0 / 6.0
@@ -211,7 +203,6 @@ class BubbleGlassPlugin(BasePlugin):
         self._hook_pages()
         self._hook_noforwards()
         self._add_main_menu_entry()
-        self._snow_init()
 
     def on_plugin_unload(self):
         self._bd_shader = None
@@ -256,8 +247,6 @@ class BubbleGlassPlugin(BasePlugin):
                 "density": max(0.0, min(100.0, float(cfg["density"]))),
                 "outline": bool(cfg["outline"]),
                 "allow_noforwards": bool(cfg["allow_noforwards"]),
-                "wp_anim": bool(cfg.get("wp_anim", DEFAULTS["wp_anim"])),
-                "wp_anim_speed": max(0.0, min(100.0, float(cfg.get("wp_anim_speed", DEFAULTS["wp_anim_speed"])))),
             }
             for page in PAGE_INFO:
                 mode = int(cfg[page + "_mode"])
@@ -273,14 +262,6 @@ class BubbleGlassPlugin(BasePlugin):
             value = SLIDERS[key][5][int(value)]
         cfg[key] = value
         self._apply_cfg(cfg)
-        if key == "wp_anim":
-            targets = list(getattr(self, "_snow_views", {}).values())
-            targets += [v for _, v in getattr(self, "_views", {}).values()]
-            for view in targets:
-                try:
-                    view.invalidate()
-                except Exception:
-                    pass
         page = key.split("_")[0]
         if page in PAGE_INFO:
             self._refresh_page(page)
@@ -327,7 +308,7 @@ class BubbleGlassPlugin(BasePlugin):
             Divider(text="模糊取自当前聊天壁纸。改完设置后返回聊天即可看到效果。"),
             Text(text="页面壁纸与透明度", subtext="主页 / 联系人 / 设置 各自的壁纸和透明度",
                  icon="msg_background", accent=True, create_sub_fragment=self._page_sub_rows),
-        ] + self._fx_rows() + self._ar_rows() + self._nf_rows()
+        ] + self._ar_rows() + self._nf_rows()
 
     def _page_sub_rows(self):
         rows = []
@@ -346,139 +327,6 @@ class BubbleGlassPlugin(BasePlugin):
             self._slider_row(page + "_transparency"),
             Divider(text=PAGE_HINTS[page]),
         ]
-
-    # ---------- snow effect ----------
-
-    def _fx_rows(self):
-        return [
-            Header(text="动态壁纸"),
-            Switch(key="wp_anim", text="流动壁纸光效", default=DEFAULTS["wp_anim"], icon="msg_background",
-                   subtext="聊天、主页、联系人、设置及插件设置页显示缓慢流动的渐变光效",
-                   on_change=lambda v: self._on_change("wp_anim", v)),
-            self._slider_row("wp_anim_speed"),
-            Divider(text="光效持续流动，透明度低，不挡消息内容。"),
-        ]
-
-    def _snow_init(self):
-        try:
-            self._snow_views = {}
-            self._snow_frags = {}
-            self._snow_bitmap = None
-            self._snow_shader = None
-            self._snow_paint = None
-            from android.graphics import Matrix
-            from java.lang import System
-            from android.os import SystemClock
-            self._snow_matrix = Matrix()
-            self._System = System
-            self._SystemClock = SystemClock
-            for cls_name in ("org.telegram.ui.ChatActivity",
-                             "app.exteraless.plugins.ui.PluginSettingsActivity"):
-                self._try_hook(cls_name, "createView", _Hook(after=self._on_snow_view), quiet=True)
-                self._try_hook(cls_name, "onFragmentDestroy", _Hook(before=self._on_snow_destroy), quiet=True)
-            # Low-frequency invalidation keeps the snow falling even when the
-            # page is idle; each tick is one cheap redraw of the visible pages.
-            self._ui(self._snow_tick, delay=80)
-        except Exception:
-            self._report("snow_init")
-
-    def _snow_tick(self):
-        try:
-            if self._cfg.get("wp_anim"):
-                targets = list(getattr(self, "_snow_views", {}).values())
-                targets += [v for _, v in getattr(self, "_views", {}).values()]
-                for view in targets:
-                    try:
-                        if view.isShown():
-                            view.invalidate()
-                    except Exception:
-                        pass
-        except Exception:
-            self._report("snow_tick")
-        finally:
-            try:
-                self._ui(self._snow_tick, delay=80)
-            except Exception:
-                pass
-
-    def _on_snow_view(self, param):
-        try:
-            frag = param.thisObject
-            if frag is None:
-                return
-            view = param.getResult()
-            if view is None:
-                return
-            view_id = self._System.identityHashCode(view)
-            frag_id = self._ident(frag)
-            self._snow_views[view_id] = view
-            self._snow_frags[frag_id] = view_id
-            if self._cfg.get("wp_anim"):
-                view.invalidate()
-        except Exception:
-            self._report("snow_view")
-
-    def _on_snow_destroy(self, param):
-        try:
-            frag_id = self._ident(param.thisObject)
-            view_id = self._snow_frags.pop(frag_id, None)
-            if view_id is not None:
-                self._snow_views.pop(view_id, None)
-        except Exception:
-            pass
-
-    def _snow_ensure(self):
-        if self._snow_shader is not None:
-            return True
-        try:
-            from android.graphics import Bitmap, BitmapShader, Canvas, Paint, Shader
-            size = 256
-            bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-            c = Canvas(bmp)
-            spots = [(60, 70, 95), (195, 55, 85), (75, 195, 90), (205, 205, 100)]
-            colors = [0x4434E89E, 0x446A5AE0, 0x44A8C8FF, 0x44F48FB1]
-            for (x, y, r), col in zip(spots, colors):
-                paint = Paint(Paint.ANTI_ALIAS_FLAG)
-                paint.setColor(col)
-                c.drawCircle(x, y, r, paint)
-            self._snow_bitmap = bmp
-            self._snow_shader = BitmapShader(bmp, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
-            self._snow_paint = Paint()
-            self._snow_paint.setFilterBitmap(True)
-            self._snow_paint.setShader(self._snow_shader)
-            return True
-        except Exception:
-            self._report("snow_ensure")
-            return False
-
-    def _on_snow_draw(self, param):
-        # Drawn after the chat's own dispatchDraw so snow sits above bubbles.
-        # Tiled bitmap shader = one drawRect per frame, no per-flake Java calls.
-        try:
-            if not self._cfg.get("wp_anim"):
-                return
-            view_id = self._System.identityHashCode(param.thisObject)
-            snow = view_id in self._snow_views
-            if not snow:
-                entry = self._views.get(view_id)
-                snow = entry is not None and entry[0] in SNOW_PAGES
-            if not snow:
-                return
-            canvas = param.args[0]
-            width = float(canvas.getWidth())
-            height = float(canvas.getHeight())
-            if width <= 0 or height <= 0 or not self._snow_ensure():
-                return
-            now = self._SystemClock.uptimeMillis() / 1000.0
-            speed = 6.0 + (float(self._cfg.get("wp_anim_speed", 50)) / 100.0) * 60.0
-            offset = (now * speed) % 256.0
-            sway = math.sin(now * 0.7) * 5.0
-            self._snow_matrix.reset()
-            self._snow_matrix.setTranslate(sway, offset)
-            self._snow_shader.setLocalMatrix(self._snow_matrix)
-            canvas.drawRect(0.0, 0.0, width, height, self._snow_paint)
-        except Exception:
-            self._report("snow_draw")
 
     # ---------- anti-recall ----------
 
@@ -675,7 +523,7 @@ class BubbleGlassPlugin(BasePlugin):
             self._try_hook(cls_name, "onFragmentDestroy", _Hook(before=self._on_page_destroyed))
         layout = "org.telegram.ui.Components.SizeNotifierFrameLayout"
         self._try_hook(layout, "getNewDrawable", _Hook(after=self._on_get_new_drawable))
-        self._try_hook(layout, "dispatchDraw", _Hook(before=self._on_layout_draw, after=self._on_snow_draw))
+        self._try_hook(layout, "dispatchDraw", _Hook(before=self._on_layout_draw))
         self._try_hook(layout, "getNewDrawableMotion", _Hook(after=self._on_get_new_motion))
         # Action bars with an adaptive background (contacts) go through the base
         # drawBlurRect() overloads rather than the page's own override.
