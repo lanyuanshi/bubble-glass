@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.6"
+__version__ = "1.11.7"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1416,13 +1416,13 @@ class BubbleGlassPlugin(BasePlugin):
                         self._cg_touch.pop(i, None)
                         self._cg_header_long_press(v, fx, fy)
 
-                run_on_ui_thread(fire, 600)
+                run_on_ui_thread(fire, 800)
             elif state is not None:
                 if action == 2:
                     if abs(float(event.getX()) - state[1]) > 48 or abs(float(event.getY()) - state[2]) > 48:
                         state[0] += 1
                 elif action in (1, 3):
-                    state[0] += 1
+                    self._cg_touch.pop(ident, None)
         except Exception:
             self._report("groups_touch")
 
