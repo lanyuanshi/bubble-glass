@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.0"
+__version__ = "1.11.1"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1318,10 +1318,10 @@ class BubbleGlassPlugin(BasePlugin):
                 from android_utils import OnClickListener
                 from org.telegram.ui.Cells import GraySectionCell
                 cell = cast(GraySectionCell, holder.itemView)
-                # GraySectionCell is excluded from the section cards and has its own
-                # opaque gray background: drop it so the page wallpaper shows through.
+                # The header strip follows the contacts page transparency so it blends
+                # with the section cards instead of always showing the bare wallpaper.
                 try:
-                    cell.setNoBackground(True)
+                    self._cg_style_header(cell)
                 except Exception:
                     pass
                 # 32dp headers are easy to mis-tap into the neighbour group.
@@ -1352,6 +1352,16 @@ class BubbleGlassPlugin(BasePlugin):
             param.setResult(None)
         except Exception:
             self._report("groups_bind")
+
+    def _cg_style_header(self, cell):
+        from android.graphics.drawable import ColorDrawable
+        from org.telegram.ui.ActionBar import Theme
+        alpha = self._page_alpha("contacts") if self._page_on("contacts") else 255
+        try:
+            color = Theme.getColor(Theme.key_graySection)
+        except Exception:
+            color = 0xFF2A2A2A
+        cell.setBackground(ColorDrawable(_with_alpha(color, alpha)))
 
     def _cg_names_changed(self):
         try:
