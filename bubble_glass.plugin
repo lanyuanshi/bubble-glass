@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.8"
+__version__ = "1.11.9"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1292,9 +1292,7 @@ class BubbleGlassPlugin(BasePlugin):
                 return
             pos = int(param.args[1])
             if pos == 0:
-                # Encode the collapsed flag so the diff in update(true) treats a
-                # toggled header as changed and rebinds it (arrow rotation).
-                param.setResult("Header:%d" % (1 if entry[2] else 0))
+                param.setResult("Header")
             else:
                 param.setResult(entry[1][pos - 1] if pos - 1 < len(entry[1]) else None)
         except Exception:
@@ -1546,15 +1544,10 @@ class BubbleGlassPlugin(BasePlugin):
 
         def run():
             try:
-                # Diff-based update: only the toggled section's rows are rebound, so
-                # other headers don't flash and the change animates smoothly.
-                adapter.update(True)
+                adapter.notifySectionsChanged()
+                adapter.notifyDataSetChanged()
             except Exception:
-                try:
-                    adapter.notifySectionsChanged()
-                    adapter.notifyDataSetChanged()
-                except Exception:
-                    self._report("groups_refresh")
+                self._report("groups_refresh")
         self._ui(run)
 
     def _cg_long_press(self, param):
