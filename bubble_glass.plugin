@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.10"
+__version__ = "1.11.11"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1416,7 +1416,9 @@ class BubbleGlassPlugin(BasePlugin):
 
     def _cg_touch_event(self, param):
         # Watch touches on the contacts list: a stationary press on a group header
-        # for ~0.6s opens the header menu (the list's own long-press ignores headers).
+        # for ~0.8s opens the header menu (the list's own long-press ignores headers).
+        # Defensive getattr throughout: a stale scheduled callback must never be able
+        # to take the plugin down if the grouping state was reset/reloaded meanwhile.
         try:
             if len(param.args) != 1:
                 return
@@ -1426,24 +1428,32 @@ class BubbleGlassPlugin(BasePlugin):
             event = param.args[0]
             action = int(event.getActionMasked())
             ident = System.identityHashCode(view)
-            state = self._cg_touch.get(ident)
+            touch = getattr(self, "_cg_touch", None)
+            if touch is None:
+                return
+            state = touch.get(ident)
             if action == 0:
                 adapter = view.getAdapter()
                 sections = self._cg_sections.get(self._ident(adapter)) if adapter is not None else None
                 if not sections:
-                    self._cg_touch.pop(ident, None)
+                    touch.pop(ident, None)
                     return
                 x, y = float(event.getX()), float(event.getY())
-                self._cg_touch_seq += 1
-                token = self._cg_touch_seq
-                self._cg_touch[ident] = [token, x, y, False]
+                # Unique token per press so a stale scheduled long-press can't fire on a
+                # later tap (rapid clicks) or after the finger already moved/released.
+                token = getattr(self, "_cg_touch_seq", 0) + 1
+                self._cg_touch_seq = token
+                touch[ident] = [token, x, y, False]
                 from android_utils import run_on_ui_thread
 
                 def fire(v=view, i=ident, t=token, fx=x, fy=y):
-                    cur = self._cg_touch.get(i)
-                    if cur is not None and cur[0] == t and not cur[3]:
-                        self._cg_touch.pop(i, None)
-                        self._cg_header_long_press(v, fx, fy)
+                    try:
+                        cur = touch.get(i)
+                        if cur is not None and cur[0] == t and not cur[3]:
+                            touch.pop(i, None)
+                            self._cg_header_long_press(v, fx, fy)
+                    except Exception:
+                        pass
 
                 run_on_ui_thread(fire, 800)
             elif state is not None:
@@ -1451,7 +1461,7 @@ class BubbleGlassPlugin(BasePlugin):
                     if abs(float(event.getX()) - state[1]) > 48 or abs(float(event.getY()) - state[2]) > 48:
                         state[3] = True
                 elif action in (1, 3):
-                    self._cg_touch.pop(ident, None)
+                    touch.pop(ident, None)
         except Exception:
             self._report("groups_touch")
 
