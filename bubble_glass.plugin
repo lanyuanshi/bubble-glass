@@ -15,7 +15,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.14"
+__version__ = "1.11.15"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -35,6 +35,9 @@ PAGES = (
 )
 PAGE_INFO = {p[0]: p for p in PAGES}
 PAGE_BY_CLASS = {p[2]: p[0] for p in PAGES}
+# Pages that get the falling-snow overlay (chat + plugin settings are tracked
+# separately in _snow_views; these three are the tab pages already in _views).
+SNOW_PAGES = ("home", "contacts", "settings")
 PAGE_HINTS = {
     "home": "对话列表、顶栏和文件夹标签盖在壁纸上的那层底色有多透。",
     "contacts": "联系人列表底色和卡片有多透。",
@@ -274,11 +277,14 @@ class BubbleGlassPlugin(BasePlugin):
             self._snow_bitmap = None
             self._snow_shader = None
             self._snow_paint = None
-        if key == "snow_on" and getattr(self, "_snow_view", None) is not None:
-            try:
-                self._snow_view.invalidate()
-            except Exception:
-                pass
+        if key == "snow_on":
+            targets = list(self._snow_views.values())
+            targets += [v for _, v in self._views.values()]
+            for view in targets:
+                try:
+                    view.invalidate()
+                except Exception:
+                    pass
         page = key.split("_")[0]
         if page in PAGE_INFO:
             self._refresh_page(page)
@@ -350,17 +356,17 @@ class BubbleGlassPlugin(BasePlugin):
     def _snow_rows(self):
         return [
             Header(text="雪花特效"),
-            Switch(key="snow_on", text="聊天飘雪", default=DEFAULTS["snow_on"], icon="msg_theme",
-                   subtext="在聊天背景上飘落雪花，不影响消息操作",
+            Switch(key="snow_on", text="全局飘雪", default=DEFAULTS["snow_on"], icon="msg_theme",
+                   subtext="聊天、主页、联系人、设置及插件设置页都飘雪花，不影响操作",
                    on_change=lambda v: self._on_change("snow_on", v)),
             self._slider_row("snow_density"),
-            Divider(text="雪花随聊天滚动/新消息刷新而飘动，空闲时保持静止以省电。"),
+            Divider(text="雪花随页面滚动/刷新而飘动，空闲时保持静止以省电。"),
         ]
 
     def _snow_init(self):
         try:
-            self._snow_view = None
-            self._snow_view_id = 0
+            self._snow_views = {}
+            self._snow_frags = {}
             self._snow_bitmap = None
             self._snow_shader = None
             self._snow_paint = None
@@ -370,32 +376,36 @@ class BubbleGlassPlugin(BasePlugin):
             self._snow_matrix = Matrix()
             self._System = System
             self._SystemClock = SystemClock
-            chat = "org.telegram.ui.ChatActivity"
-            self._try_hook(chat, "createView", _Hook(after=self._on_chat_view), quiet=True)
-            self._try_hook(chat, "onFragmentDestroy", _Hook(before=self._on_chat_destroy), quiet=True)
+            for cls_name in ("org.telegram.ui.ChatActivity",
+                             "app.exteraless.plugins.ui.PluginSettingsActivity"):
+                self._try_hook(cls_name, "createView", _Hook(after=self._on_snow_view), quiet=True)
+                self._try_hook(cls_name, "onFragmentDestroy", _Hook(before=self._on_snow_destroy), quiet=True)
         except Exception:
             self._report("snow_init")
 
-    def _on_chat_view(self, param):
+    def _on_snow_view(self, param):
         try:
             frag = param.thisObject
-            if frag is None or "ChatActivity" not in frag.getClass().getName():
+            if frag is None:
                 return
             view = param.getResult()
-            if view is not None:
-                self._snow_view = view
-                self._snow_view_id = self._System.identityHashCode(view)
-                if self._cfg.get("snow_on"):
-                    view.invalidate()
+            if view is None:
+                return
+            view_id = self._System.identityHashCode(view)
+            frag_id = self._ident(frag)
+            self._snow_views[view_id] = view
+            self._snow_frags[frag_id] = view_id
+            if self._cfg.get("snow_on"):
+                view.invalidate()
         except Exception:
             self._report("snow_view")
 
-    def _on_chat_destroy(self, param):
+    def _on_snow_destroy(self, param):
         try:
-            frag = param.thisObject
-            if frag is not None and "ChatActivity" in frag.getClass().getName():
-                self._snow_view = None
-                self._snow_view_id = 0
+            frag_id = self._ident(param.thisObject)
+            view_id = self._snow_frags.pop(frag_id, None)
+            if view_id is not None:
+                self._snow_views.pop(view_id, None)
         except Exception:
             pass
 
@@ -432,9 +442,14 @@ class BubbleGlassPlugin(BasePlugin):
         # Drawn after the chat's own dispatchDraw so snow sits above bubbles.
         # Tiled bitmap shader = one drawRect per frame, no per-flake Java calls.
         try:
-            if not self._cfg.get("snow_on") or self._snow_view_id == 0:
+            if not self._cfg.get("snow_on"):
                 return
-            if self._System.identityHashCode(param.thisObject) != self._snow_view_id:
+            view_id = self._System.identityHashCode(param.thisObject)
+            snow = view_id in self._snow_views
+            if not snow:
+                entry = self._views.get(view_id)
+                snow = entry is not None and entry[0] in SNOW_PAGES
+            if not snow:
                 return
             canvas = param.args[0]
             width = float(canvas.getWidth())
