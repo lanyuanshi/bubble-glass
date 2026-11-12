@@ -12,9 +12,9 @@ except ImportError:
 
 __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
-__description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
+__description__ = "玻璃质感气泡与页面壁纸、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.11"
+__version__ = "1.11.12"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -26,11 +26,6 @@ HOME_OFF, HOME_IMAGE, HOME_CHAT = 0, 1, 2
 HOME_ITEMS = ["关闭", "自定义图片", "跟随聊天壁纸"]
 HOME_MAX_SIDE = 2560
 
-# contact groups
-GROUPS_DEFAULT = "家人,朋友,工作"
-UNGROUPED, HIDDEN_GROUP = "未分类", "已隐藏"
-CG_USER_CELL, CG_HEADER_CELL = 0, 1
-CG_ADAPTER = "org.telegram.ui.Adapters.ContactsAdapter"
 # (key, label, fragment class, image picker request code)
 PAGES = (
     ("home", "主页", "org.telegram.ui.DialogsActivity", 26471),
@@ -94,7 +89,7 @@ SLIDERS = {
 
 BACKDROP_SCALE = 1.0 / 6.0
 BACKDROP_CHECK_INTERVAL = 0.3
-BACKDROP_MIN_REBUILD_INTERVAL = 0.5
+BACKDROP_MIN_REBUILD_INTERVAL = 1.0
 
 
 def _signed(color):
@@ -185,6 +180,8 @@ class BubbleGlassPlugin(BasePlugin):
         self._seen = set()
         self._bar_classes = set()
         self._search_bg = None
+        self._style_cache = None
+        self._stroke_width = None
         self._reload_cfg()
         self._ar_init()
 
@@ -204,12 +201,9 @@ class BubbleGlassPlugin(BasePlugin):
         except Exception:
             self._log_error("Failed to hook ChatMessageCell.setVisiblePart")
         self._hook_pages()
-        self._cg_init()
-        self._hook_contacts()
         self._hook_noforwards()
 
     def on_plugin_unload(self):
-        self._cg_unload()
         self._bd_shader = None
         self._bg_view = None
         self._cell_state = {}
@@ -313,7 +307,7 @@ class BubbleGlassPlugin(BasePlugin):
             Divider(text="模糊取自当前聊天壁纸。改完设置后返回聊天即可看到效果。"),
             Text(text="页面壁纸与透明度", subtext="主页 / 联系人 / 设置 各自的壁纸和透明度",
                  icon="msg_background", accent=True, create_sub_fragment=self._page_sub_rows),
-        ] + self._cg_rows() + self._ar_rows() + self._nf_rows()
+        ] + self._ar_rows() + self._nf_rows()
 
     def _page_sub_rows(self):
         rows = []
@@ -445,7 +439,7 @@ class BubbleGlassPlugin(BasePlugin):
                                ("anti_recall_icon", self._ar_apply_icon)):
                 value = self.get_setting(key, None)
                 if value is not None:
-                    apply(self._cg_on(value))
+                    apply(self._as_bool(value))
             mark = self.get_setting("anti_recall_mark", None)
             if mark is not None:
                 self._ar_apply_mark(mark)
@@ -1050,615 +1044,6 @@ class BubbleGlassPlugin(BasePlugin):
         return cfg["enabled"] and (cfg["style"] != STYLE_THEME or cfg["transparency"] > 0 or
                                    (cfg["blur"] > 0 and cfg["density"] > 0))
 
-    # ---------- contact groups ----------
-
-    def _cg_rows(self):
-        return [
-            Header(text="联系人分组"),
-            Switch(key="groups_on_idx", text="启用分组", default="false", icon="msg_folders",
-                   subtext="联系人页按分类分段显示，长按联系人可分类或隐藏",
-                   on_change=lambda v, k="groups_on": (self._cg_switch(k, bool(v)), self._cg_refresh())),
-            Input(key="groups_names", text="分类名称", default=GROUPS_DEFAULT, icon="msg_edit",
-                  subtext="用逗号分隔，按此顺序显示",
-                  on_change=lambda *_: self._cg_names_changed()),
-            Switch(key="groups_show_hidden_idx", text="显示「已隐藏」分组", default="false", icon="msg_archive_hide",
-                   subtext="显示后可长按其中的人取消隐藏",
-                   on_change=lambda v, k="groups_show_hidden": (self._cg_switch(k, bool(v)), self._cg_bump_data(), self._cg_refresh())),
-            Text(text="展开全部分组", icon="msg_select", on_click=lambda *_: self._cg_expand_all()),
-            Divider(text="开启后，联系人页的长按改为「分类 / 隐藏」菜单；关闭即恢复原样。"),
-        ]
-
-    def _cg_init(self):
-        self._cg_fields = {}
-        self._cg_sections = {}
-        self._cg_adapter = None
-        self._cg_listeners = {}
-        self._cg_touch = {}
-        self._cg_arrow_bitmap = None
-        self._cg_data_version = 0
-        self._cg_buckets_cache = {}
-        self._cg_touch_seq = 0
-        self._cg_load()
-
-    def _cg_unload(self):
-        adapter = self._cg_adapter
-        self._cg_adapter = None
-        self._cg_sections = {}
-        self._cg_listeners = {}
-        self._cg_buckets_cache = {}
-        if adapter is not None:
-            def restore():
-                try:
-                    adapter.notifySectionsChanged()
-                    adapter.notifyDataSetChanged()
-                except Exception:
-                    pass
-            self._ui(restore, delay=500)
-
-    def _cg_load(self):
-        import json
-        self._cg = {"map": {}, "hidden": [], "collapsed": []}
-        try:
-            data = self.get_setting("groups_data", "{}") or "{}"
-            if isinstance(data, (str, bytes)):
-                data = json.loads(data)
-            if isinstance(data, dict):
-                for key, default in self._cg.items():
-                    if isinstance(data.get(key), type(default)):
-                        self._cg[key] = data[key]
-        except Exception:
-            self._report("groups_load")
-
-    def _cg_save(self):
-        import json
-        self.set_setting("groups_data", json.dumps(self._cg, ensure_ascii=False))
-        self._cg_refresh()
-
-    def _cg_names(self):
-        raw = self.get_setting("groups_names", GROUPS_DEFAULT) or ""
-        names = []
-        for part in str(raw).replace("，", ",").replace("、", ",").split(","):
-            part = part.strip()
-            if part and part not in names and part not in (UNGROUPED, HIDDEN_GROUP):
-                names.append(part)
-        return names
-
-    @staticmethod
-    def _jval(value):
-        text = str(value)
-        if text.lower() in ("true", "false"):
-            return text.lower() == "true"
-        try:
-            return int(text)
-        except ValueError:
-            return value
-
-    def _cg_raw(self, adapter, name):
-        field = self._cg_fields.get(name)
-        if field is None:
-            field = _java_class(CG_ADAPTER).getDeclaredField(name)
-            field.setAccessible(True)
-            self._cg_fields[name] = field
-        return field.get(adapter)
-
-    def _cg_field(self, adapter, name):
-        return self._jval(self._cg_raw(adapter, name))
-
-    def _cg_bool(self, key):
-        # SDK switches hand back their key with "_idx"; older saves used the plain key.
-        # A stored Java Boolean makes get_setting() fail, so fall back to raw prefs.
-        for k in (key + "_idx", key):
-            value = self.get_setting(k, None)
-            if value is not None:
-                return self._cg_on(value)
-        try:
-            from org.telegram.messenger import ApplicationLoader
-            prefs = ApplicationLoader.applicationContext.getSharedPreferences(
-                "plugin_settings_" + str(__id__), 0)
-            all_prefs = prefs.getAll()
-            for k in (key + "_idx", key):
-                if all_prefs.containsKey(k):
-                    return self._cg_on(all_prefs.get(k))
-        except Exception:
-            pass
-        return False
-
-    def _cg_on(self, value):
-        # A stored Java Boolean makes get_setting() fail and return the default,
-        # so also accept plain booleans / numbers here.
-        import json
-        try:
-            value = json.loads(value) if isinstance(value, (str, bytes)) else value
-        except ValueError:
-            pass
-        if isinstance(value, bool):
-            return value
-        return str(value).lower() in ("true", "1")
-
-    def _cg_switch(self, key, on):
-        # Store booleans as JSON strings: PythonBridge.getSetting casts to String.
-        for k in (key, key + "_idx"):
-            self.set_setting(k, "true" if on else "false")
-
-    def _cg_active(self, adapter):
-        if not self._cg_bool("groups_on"):
-            return False
-        return (self._cg_field(adapter, "onlyUsers") == 0 and not self._cg_field(adapter, "isAdmin")
-                and not self._cg_field(adapter, "isEmptyWithMainTabs"))
-
-    def _cg_bump_data(self):
-        # Grouping inputs (mapping / hidden / names / show-hidden) changed; drop
-        # the cached per-adapter contact buckets so the next layout rebuilds them.
-        self._cg_data_version += 1
-        self._cg_buckets_cache.clear()
-
-    def _cg_buckets(self, adapter):
-        # Cached (name, users) sections. Rebuilt only when the grouping data or the
-        # contact count changes, instead of walking every contact on each layout pass.
-        from org.telegram.messenger import ContactsController, MessagesController, UserConfig
-
-        account = UserConfig.selectedAccount
-        source = None
-        if self._cg_field(adapter, "sortType") == 2:
-            source = self._cg_raw(adapter, "onlineContacts")
-        if source is None:
-            source = ContactsController.getInstance(account).contacts
-        if source is None:
-            return []
-        ident = self._ident(adapter)
-        key = (self._cg_data_version, source.size())
-        cached = self._cg_buckets_cache.get(ident)
-        if cached is not None and cached[0] == key:
-            return cached[1]
-
-        names = self._cg_names()
-        messages = MessagesController.getInstance(account)
-        buckets = {name: [] for name in names + [UNGROUPED, HIDDEN_GROUP]}
-        mapping, hidden = self._cg["map"], set(self._cg["hidden"])
-        for i in range(source.size()):
-            uid = int(source.get(i).user_id)
-            user = messages.getUser(uid)
-            if user is None:
-                continue
-            if uid in hidden:
-                buckets[HIDDEN_GROUP].append(user)
-            else:
-                buckets.get(mapping.get(str(uid), UNGROUPED), buckets[UNGROUPED]).append(user)
-        order = names + [UNGROUPED]
-        if self._cg_bool("groups_show_hidden"):
-            order.append(HIDDEN_GROUP)
-        result = [(name, buckets[name]) for name in order if buckets[name] or name in names]
-        self._cg_buckets_cache[ident] = (key, result)
-        return result
-
-    def _hook_contacts(self):
-        for method, fn in (("getSectionCount", self._cg_section_count), ("getCountForSection", self._cg_count),
-                           ("getItemViewType", self._cg_view_type), ("getItem", self._cg_item),
-                           ("isEnabled", self._cg_enabled_row), ("getSectionHeaderView", self._cg_header_view),
-                           ("getLetter", self._cg_letter)):
-            self._try_hook(CG_ADAPTER, method, _Hook(after=fn), quiet=True)
-        self._try_hook(CG_ADAPTER, "onBindViewHolder", _Hook(before=self._cg_bind), quiet=True)
-        self._try_hook("org.telegram.ui.ContactsActivity", "showOrUpdateActionMode",
-                       _Hook(before=self._cg_long_press), quiet=True)
-        # RecyclerListView runs its own gesture detector that swallows long-presses
-        # before the header cell's view listener can fire, so track them here.
-        self._try_hook("org.telegram.ui.Components.RecyclerListView", "dispatchTouchEvent",
-                       _Hook(before=self._cg_touch_event), quiet=True)
-
-    def _cg_section_count(self, param):
-        try:
-            adapter = param.thisObject
-            if not self._cg_active(adapter):
-                self._cg_sections.pop(self._ident(adapter), None)
-                return
-            buckets = self._cg_buckets(adapter)
-            collapsed = set(self._cg["collapsed"])
-            sections = [(name, users, name in collapsed) for name, users in buckets]
-            self._cg_sections = {self._ident(adapter): sections}
-            self._cg_adapter = adapter
-            param.setResult(1 + len(sections))
-        except Exception:
-            self._report("groups_sections")
-
-    def _cg_of(self, param, section):
-        sections = self._cg_sections.get(self._ident(param.thisObject))
-        if not sections or section < 1 or section > len(sections):
-            return None
-        return sections[section - 1]
-
-    def _cg_count(self, param):
-        try:
-            entry = self._cg_of(param, int(param.args[0]))
-            if entry is not None:
-                param.setResult(1 if entry[2] else 1 + len(entry[1]))
-        except Exception:
-            self._report("groups_rows")
-
-    def _cg_view_type(self, param):
-        try:
-            if len(param.args) != 2:
-                return
-            entry = self._cg_of(param, int(param.args[0]))
-            if entry is not None:
-                param.setResult(CG_HEADER_CELL if int(param.args[1]) == 0 else CG_USER_CELL)
-        except Exception:
-            self._report("groups_view_type")
-
-    def _cg_item(self, param):
-        try:
-            if len(param.args) != 2:
-                return
-            entry = self._cg_of(param, int(param.args[0]))
-            if entry is None:
-                return
-            pos = int(param.args[1])
-            if pos == 0:
-                param.setResult("Header")
-            else:
-                param.setResult(entry[1][pos - 1] if pos - 1 < len(entry[1]) else None)
-        except Exception:
-            self._report("groups_item")
-
-    def _cg_enabled_row(self, param):
-        try:
-            if len(param.args) != 3:
-                return
-            entry = self._cg_of(param, int(param.args[1]))
-            if entry is not None:
-                param.setResult(int(param.args[2]) > 0)
-        except Exception:
-            self._report("groups_enabled")
-
-    def _cg_header_view(self, param):
-        try:
-            entry = self._cg_of(param, int(param.args[0]))
-            view = param.getResult()
-            if entry is not None and view is not None:
-                from java import cast
-                from org.telegram.ui.Cells import LetterSectionCell
-                cast(LetterSectionCell, view).setLetter("")
-        except Exception:
-            self._report("groups_header")
-
-    def _cg_letter(self, param):
-        try:
-            if self._cg_sections.get(self._ident(param.thisObject)):
-                param.setResult(None)
-        except Exception:
-            self._report("groups_letter")
-
-    def _cg_bind(self, param):
-        try:
-            if len(param.args) != 3:
-                return
-            section, pos, holder = int(param.args[0]), int(param.args[1]), param.args[2]
-            entry = self._cg_of(param, section)
-            if entry is None:
-                return
-            from java import cast
-            name, users, collapsed = entry
-            if pos == 0:
-                from android_utils import OnClickListener
-                from org.telegram.ui.ActionBar import Theme
-                from org.telegram.ui.Cells import TextCell
-                cell = cast(TextCell, holder.itemView)
-                try:
-                    cell.heightDp = 40
-                    cell.requestLayout()
-                except Exception:
-                    pass
-                try:
-                    cell.setColors(Theme.key_windowBackgroundWhiteGrayIcon,
-                                   Theme.key_windowBackgroundWhiteBlackText)
-                except Exception:
-                    pass
-                listener = self._cg_listeners.get(name)
-                if listener is None:
-                    listener = OnClickListener(lambda v, n=name: self._cg_toggle(n))
-                    self._cg_listeners[name] = listener
-                arrow = self._cg_arrow(cell.getResources())
-                cell.setTextAndValueAndIcon(name, str(len(users)), arrow, False)
-                # TextCell's child text/image views swallow touches before they reach
-                # the cell's own listener, so hook the listener onto each of them too.
-                for target in (cell, cell.textView, cell.valueTextView, cell.imageView):
-                    try:
-                        if target is not None:
-                            target.setOnClickListener(listener)
-                    except Exception:
-                        pass
-                try:
-                    cell.imageView.setRotation(0 if collapsed else 90)
-                except Exception:
-                    pass
-            elif pos - 1 < len(users):
-                from org.telegram.ui.Cells import UserCell
-                cell = cast(UserCell, holder.itemView)
-                cell.setAvatarPadding(7, 1)
-                cell.setData(users[pos - 1], None, None, 0)
-                cell.setChecked(False, False)
-            param.setResult(None)
-        except Exception:
-            self._report("groups_bind")
-
-    def _cg_arrow(self, resources):
-        from android.graphics import Bitmap, Canvas, Paint, Path
-        from android.graphics.drawable import BitmapDrawable
-        from org.telegram.messenger import AndroidUtilities
-        from org.telegram.ui.ActionBar import Theme
-        if self._cg_arrow_bitmap is None:
-            size = AndroidUtilities.dp(16)
-            bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-            canvas = Canvas(bmp)
-            paint = Paint(Paint.ANTI_ALIAS_FLAG)
-            paint.setStyle(Paint.Style.FILL)
-            try:
-                paint.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayIcon))
-            except Exception:
-                paint.setColor(0xFF9AA0A6)
-            m = float(AndroidUtilities.dp(3))
-            s = float(size)
-            path = Path()
-            path.moveTo(m, m)
-            path.lineTo(m, s - m)
-            path.lineTo(s - m, s / 2.0)
-            path.close()
-            canvas.drawPath(path, paint)
-            self._cg_arrow_bitmap = bmp
-        return BitmapDrawable(resources, self._cg_arrow_bitmap)
-
-    def _cg_names_changed(self):
-        try:
-            self._exteraless_drop_settings_cache()
-        except Exception:
-            pass
-        self._cg_bump_data()
-        self._cg_refresh()
-
-    def _cg_touch_event(self, param):
-        # Watch touches on the contacts list: a stationary press on a group header
-        # for ~0.8s opens the header menu (the list's own long-press ignores headers).
-        # Defensive getattr throughout: a stale scheduled callback must never be able
-        # to take the plugin down if the grouping state was reset/reloaded meanwhile.
-        try:
-            if len(param.args) != 1:
-                return
-            from java.lang import System
-
-            view = param.thisObject
-            event = param.args[0]
-            action = int(event.getActionMasked())
-            ident = System.identityHashCode(view)
-            touch = getattr(self, "_cg_touch", None)
-            if touch is None:
-                return
-            state = touch.get(ident)
-            if action == 0:
-                adapter = view.getAdapter()
-                sections = self._cg_sections.get(self._ident(adapter)) if adapter is not None else None
-                if not sections:
-                    touch.pop(ident, None)
-                    return
-                x, y = float(event.getX()), float(event.getY())
-                # Unique token per press so a stale scheduled long-press can't fire on a
-                # later tap (rapid clicks) or after the finger already moved/released.
-                token = getattr(self, "_cg_touch_seq", 0) + 1
-                self._cg_touch_seq = token
-                touch[ident] = [token, x, y, False]
-                from android_utils import run_on_ui_thread
-
-                def fire(v=view, i=ident, t=token, fx=x, fy=y):
-                    try:
-                        cur = touch.get(i)
-                        if cur is not None and cur[0] == t and not cur[3]:
-                            touch.pop(i, None)
-                            self._cg_header_long_press(v, fx, fy)
-                    except Exception:
-                        pass
-
-                run_on_ui_thread(fire, 800)
-            elif state is not None:
-                if action == 2:
-                    if abs(float(event.getX()) - state[1]) > 48 or abs(float(event.getY()) - state[2]) > 48:
-                        state[3] = True
-                elif action in (1, 3):
-                    touch.pop(ident, None)
-        except Exception:
-            self._report("groups_touch")
-
-    def _cg_header_long_press(self, view, x, y):
-        try:
-            child = view.findChildViewUnder(x, y)
-            cell = child
-            while cell is not None and "Cells.TextCell" not in str(cell.getClass().getName()):
-                parent = cell.getParent()
-                if parent is None or parent is view:
-                    cell = None
-                    break
-                cell = parent
-            if cell is None:
-                return
-            adapter = view.getAdapter()
-            if adapter is None:
-                return
-            flat = int(view.getChildAdapterPosition(cell))
-            if flat < 0:
-                return
-            section = int(adapter.getSectionForPosition(flat))
-            if section < 1 or int(adapter.getPositionInSectionForPosition(flat)) != 0:
-                return
-            sections = self._cg_sections.get(self._ident(adapter))
-            entry = sections[section - 1] if sections and 0 <= section - 1 < len(sections) else None
-            if entry is not None:
-                self._cg_header_menu(entry[0], view.getContext())
-        except Exception:
-            self._report("groups_header_long")
-
-    def _cg_header_menu(self, name, context=None):
-        # Long-press on a category header: collapse/expand or move it up/down.
-        try:
-            from ui.alert import AlertDialogBuilder
-            from android_utils import get_activity
-
-            names = self._cg_names()
-            collapsed = name in self._cg["collapsed"]
-            items = ["展开" if collapsed else "收起"]
-            index = names.index(name) if name in names else -1
-            if index > 0:
-                items.append("上移")
-            if 0 <= index < len(names) - 1:
-                items.append("下移")
-
-            def on_pick(builder, which):
-                action = items[int(which)]
-                if action in ("收起", "展开"):
-                    self._cg_toggle(name)
-                elif action == "上移":
-                    self._cg_move(name, -1)
-                else:
-                    self._cg_move(name, 1)
-
-            AlertDialogBuilder(context if context is not None else get_activity()).set_title(name) \
-                .set_items(items, on_pick).set_negative_button("取消").show()
-        except Exception:
-            self._report("groups_header_menu")
-        return True
-
-    def _cg_move(self, name, delta):
-        names = self._cg_names()
-        try:
-            index = names.index(name)
-        except ValueError:
-            return
-        other = index + delta
-        if not 0 <= other < len(names):
-            return
-        names[index], names[other] = names[other], names[index]
-        self.set_setting("groups_names", ",".join(names), reload_settings=True)
-        self._cg_bump_data()
-        self._cg_refresh()
-
-    def _cg_toggle(self, name):
-        collapsed = self._cg["collapsed"]
-        if name in collapsed:
-            collapsed.remove(name)
-        else:
-            collapsed.append(name)
-        self._cg_save()
-
-    def _cg_expand_all(self):
-        self._cg["collapsed"] = []
-        self._cg_save()
-
-    def _cg_refresh(self):
-        adapter = self._cg_adapter
-        if adapter is None:
-            return
-
-        def run():
-            try:
-                adapter.notifySectionsChanged()
-                adapter.notifyDataSetChanged()
-            except Exception:
-                self._report("groups_refresh")
-        self._ui(run)
-
-    def _cg_long_press(self, param):
-        try:
-            cell = param.args[0]
-            if cell is None or "UserCell" not in str(cell.getClass().getName()):
-                return
-            adapter = self._cg_adapter
-            if adapter is None or not self._cg_sections or not self._cg_active(adapter):
-                return
-            from java import cast
-            from org.telegram.ui.Cells import UserCell
-            uid = int(cast(UserCell, cell).getDialogId())
-            if uid <= 0:
-                return
-            param.setResult(None)
-            self._cg_dialog(param.thisObject, uid)
-        except Exception:
-            self._report("groups_long_press")
-
-    def _cg_dialog(self, fragment, uid):
-        from ui.alert import AlertDialogBuilder
-        from org.telegram.messenger import MessagesController, UserConfig, UserObject
-
-        user = MessagesController.getInstance(UserConfig.selectedAccount).getUser(uid)
-        title = str(UserObject.getUserName(user)) if user is not None else str(uid)
-        names = self._cg_names()
-        current = self._cg["map"].get(str(uid))
-        hidden = uid in self._cg["hidden"]
-        items = [("✓ " if n == current else "") + n for n in names]
-        items += ["新建分类…", "取消隐藏" if hidden else "隐藏此人"]
-        if current:
-            items.append("移出「%s」" % current)
-
-        def on_pick(builder, which):
-            which = int(which)
-            if which < len(names):
-                self._cg_assign(uid, names[which])
-            elif which == len(names):
-                self._cg_new_group(fragment, uid)
-            elif which == len(names) + 1:
-                self._cg_hide(uid, not hidden)
-            else:
-                self._cg_assign(uid, None)
-
-        AlertDialogBuilder(fragment.getParentActivity()).set_title(title) \
-            .set_items(items, on_pick).set_negative_button("取消").show()
-
-    def _cg_assign(self, uid, name):
-        key = str(uid)
-        if name is None:
-            self._cg["map"].pop(key, None)
-        else:
-            self._cg["map"][key] = name
-        if uid in self._cg["hidden"]:
-            self._cg["hidden"].remove(uid)
-        self._cg_bump_data()
-        self._cg_save()
-
-    def _cg_hide(self, uid, hide):
-        hidden = self._cg["hidden"]
-        if hide and uid not in hidden:
-            hidden.append(uid)
-        elif not hide and uid in hidden:
-            hidden.remove(uid)
-        self._cg_bump_data()
-        self._cg_save()
-
-    def _cg_new_group(self, fragment, uid):
-        from ui.alert import AlertDialogBuilder
-        from android.widget import EditText
-
-        context = fragment.getParentActivity()
-        edit = EditText(context)
-        try:
-            from org.telegram.messenger import AndroidUtilities
-            from org.telegram.ui.ActionBar import Theme
-            edit.setHint("分类名称")
-            edit.setSingleLine(True)
-            edit.setTextColor(Theme.getColor(Theme.key_dialogTextBlack))
-            edit.setHintTextColor(Theme.getColor(Theme.key_dialogTextHint))
-            pad = int(AndroidUtilities.dp(20))
-            edit.setPadding(pad, pad // 2, pad, pad // 2)
-        except Exception:
-            pass
-
-        def ok(builder, which):
-            name = str(edit.getText().toString()).strip().replace(",", " ").replace("，", " ")
-            if not name or name in (UNGROUPED, HIDDEN_GROUP):
-                return
-            names = self._cg_names()
-            if name not in names:
-                names.append(name)
-                self.set_setting("groups_names", ",".join(names), reload_settings=True)
-            self._cg_assign(uid, name)
-
-        AlertDialogBuilder(context).set_title("新建分类").set_view(edit) \
-            .set_positive_button("确定", ok).set_negative_button("取消").show()
-
     def _report(self, tag):
         if tag not in self._reported:
             self._reported.add(tag)
@@ -1673,11 +1058,31 @@ class BubbleGlassPlugin(BasePlugin):
         except Exception:
             print("[bubble_glass] " + text)
 
+    @staticmethod
+    def _as_bool(value):
+        # A stored Java Boolean makes get_setting() fail and return the default,
+        # so also accept plain booleans / numbers here.
+        import json
+        try:
+            value = json.loads(value) if isinstance(value, (str, bytes)) else value
+        except ValueError:
+            pass
+        if isinstance(value, bool):
+            return value
+        return str(value).lower() in ("true", "1")
+
     def _style(self):
+        # Theme.isCurrentThemeDark() crosses the Python/Java bridge; cache it for
+        # a second instead of querying on every bubble draw.
+        now = time.monotonic()
+        cached = self._style_cache
+        if cached is not None and now - cached[1] < 1.0:
+            return cached[0]
         style = self._cfg["style"]
         if style == STYLE_AUTO:
             from org.telegram.ui.ActionBar import Theme
-            return STYLE_NIGHT if Theme.isCurrentThemeDark() else STYLE_CLEAR
+            style = STYLE_NIGHT if Theme.isCurrentThemeDark() else STYLE_CLEAR
+        self._style_cache = (style, now)
         return style
 
     @staticmethod
@@ -1753,8 +1158,12 @@ class BubbleGlassPlugin(BasePlugin):
     def _draw_outline(self, d, canvas, color, base_alpha):
         if not self._cfg["outline"]:
             return
-        from org.telegram.messenger import AndroidUtilities
-        self._stroke_paint.setStrokeWidth(max(1.0, AndroidUtilities.dp(0.66)))
+        width = self._stroke_width
+        if width is None:
+            from org.telegram.messenger import AndroidUtilities
+            width = max(1.0, AndroidUtilities.dp(0.66))
+            self._stroke_width = width
+        self._stroke_paint.setStrokeWidth(width)
         self._stroke_paint.setColor(_with_alpha(color, ((color >> 24) & 0xFF) * base_alpha))
         d.draw(canvas, self._stroke_paint)
 
