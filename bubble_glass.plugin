@@ -15,7 +15,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.15"
+__version__ = "1.11.16"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -380,8 +380,30 @@ class BubbleGlassPlugin(BasePlugin):
                              "app.exteraless.plugins.ui.PluginSettingsActivity"):
                 self._try_hook(cls_name, "createView", _Hook(after=self._on_snow_view), quiet=True)
                 self._try_hook(cls_name, "onFragmentDestroy", _Hook(before=self._on_snow_destroy), quiet=True)
+            # Low-frequency invalidation keeps the snow falling even when the
+            # page is idle; each tick is one cheap redraw of the visible pages.
+            self._ui(self._snow_tick, delay=80)
         except Exception:
             self._report("snow_init")
+
+    def _snow_tick(self):
+        try:
+            if self._cfg.get("snow_on"):
+                targets = list(getattr(self, "_snow_views", {}).values())
+                targets += [v for _, v in getattr(self, "_views", {}).values()]
+                for view in targets:
+                    try:
+                        if view.isShown():
+                            view.invalidate()
+                    except Exception:
+                        pass
+        except Exception:
+            self._report("snow_tick")
+        finally:
+            try:
+                self._ui(self._snow_tick, delay=80)
+            except Exception:
+                pass
 
     def _on_snow_view(self, param):
         try:
@@ -416,7 +438,7 @@ class BubbleGlassPlugin(BasePlugin):
             from android.graphics import Bitmap, BitmapShader, Canvas, Color, Paint, Shader
             size = 256
             density = max(0.0, min(100.0, float(self._cfg.get("snow_density", 50))))
-            count = max(6, int(70 * density / 100.0))
+            count = max(8, int(55 * density / 100.0))
             bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
             c = Canvas(bmp)
             paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -424,8 +446,8 @@ class BubbleGlassPlugin(BasePlugin):
             for _ in range(count):
                 x = rnd.uniform(2, size - 2)
                 y = rnd.uniform(2, size - 2)
-                r = rnd.uniform(0.8, 2.6)
-                a = rnd.randint(90, 220)
+                r = rnd.uniform(1.6, 5.4)
+                a = rnd.randint(120, 245)
                 paint.setColor(Color.argb(a, 255, 255, 255))
                 c.drawCircle(x, y, r, paint)
             self._snow_bitmap = bmp
@@ -457,7 +479,7 @@ class BubbleGlassPlugin(BasePlugin):
             if width <= 0 or height <= 0 or not self._snow_ensure():
                 return
             now = self._SystemClock.uptimeMillis() / 1000.0
-            offset = (now * 26.0) % 256.0
+            offset = (now * 46.0) % 256.0
             self._snow_matrix.reset()
             self._snow_matrix.setTranslate(0.0, offset)
             self._snow_shader.setLocalMatrix(self._snow_matrix)
