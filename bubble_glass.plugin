@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.5"
+__version__ = "1.11.6"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1331,7 +1331,14 @@ class BubbleGlassPlugin(BasePlugin):
                     self._cg_listeners[name] = listener
                 arrow = self._cg_arrow(cell.getResources())
                 cell.setTextAndValueAndIcon(name, str(len(users)), arrow, False)
-                cell.setOnClickListener(listener)
+                # TextCell's child text/image views swallow touches before they reach
+                # the cell's own listener, so hook the listener onto each of them too.
+                for target in (cell, cell.textView, cell.valueTextView, cell.imageView):
+                    try:
+                        if target is not None:
+                            target.setOnClickListener(listener)
+                    except Exception:
+                        pass
                 try:
                     cell.imageView.setRotation(0 if collapsed else 90)
                 except Exception:
