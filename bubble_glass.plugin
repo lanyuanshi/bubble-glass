@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.4"
+__version__ = "1.11.5"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -29,7 +29,7 @@ HOME_MAX_SIDE = 2560
 # contact groups
 GROUPS_DEFAULT = "家人,朋友,工作"
 UNGROUPED, HIDDEN_GROUP = "未分类", "已隐藏"
-CG_USER_CELL, CG_GRAY_CELL = 0, 2
+CG_USER_CELL, CG_HEADER_CELL = 0, 1
 CG_ADAPTER = "org.telegram.ui.Adapters.ContactsAdapter"
 # (key, label, fragment class, image picker request code)
 PAGES = (
@@ -1074,6 +1074,7 @@ class BubbleGlassPlugin(BasePlugin):
         self._cg_adapter = None
         self._cg_listeners = {}
         self._cg_touch = {}
+        self._cg_arrow_bitmap = None
         self._cg_load()
 
     def _cg_unload(self):
@@ -1257,7 +1258,7 @@ class BubbleGlassPlugin(BasePlugin):
                 return
             entry = self._cg_of(param, int(param.args[0]))
             if entry is not None:
-                param.setResult(CG_GRAY_CELL if int(param.args[1]) == 0 else CG_USER_CELL)
+                param.setResult(CG_HEADER_CELL if int(param.args[1]) == 0 else CG_USER_CELL)
         except Exception:
             self._report("groups_view_type")
 
@@ -1316,31 +1317,23 @@ class BubbleGlassPlugin(BasePlugin):
             name, users, collapsed = entry
             if pos == 0:
                 from android_utils import OnClickListener
-                from org.telegram.ui.Cells import GraySectionCell
-                cell = cast(GraySectionCell, holder.itemView)
-                # The header strip follows the contacts page transparency so it blends
-                # with the section cards instead of always showing the bare wallpaper.
+                from org.telegram.ui.ActionBar import Theme
+                from org.telegram.ui.Cells import TextCell
+                cell = cast(TextCell, holder.itemView)
                 try:
-                    self._cg_style_header(cell)
-                except Exception:
-                    pass
-                # 32dp headers are easy to mis-tap into the neighbour group.
-                try:
-                    cell.setLayerHeight(44)
+                    cell.setColors(Theme.key_windowBackgroundWhiteGrayIcon,
+                                   Theme.key_windowBackgroundWhiteBlackText)
                 except Exception:
                     pass
                 listener = self._cg_listeners.get(name)
                 if listener is None:
                     listener = OnClickListener(lambda v, n=name: self._cg_toggle(n))
                     self._cg_listeners[name] = listener
-                cell.setText("%s · %d" % (name, len(users)), "展开" if collapsed else "收起", listener)
+                arrow = self._cg_arrow(cell.getResources())
+                cell.setTextAndValueAndIcon(name, str(len(users)), arrow, False)
                 cell.setOnClickListener(listener)
-                # The full-width textView inside the cell is clickable and consumes
-                # touches before they reach the cell, so listen there too.
                 try:
-                    text_view = cell.getTextView()
-                    if text_view is not None:
-                        text_view.setOnClickListener(listener)
+                    cell.imageView.setRotation(0 if collapsed else 90)
                 except Exception:
                     pass
             elif pos - 1 < len(users):
@@ -1353,22 +1346,31 @@ class BubbleGlassPlugin(BasePlugin):
         except Exception:
             self._report("groups_bind")
 
-    def _cg_style_header(self, cell):
-        from android.graphics.drawable import GradientDrawable
+    def _cg_arrow(self, resources):
+        from android.graphics import Bitmap, Canvas, Paint, Path
+        from android.graphics.drawable import BitmapDrawable
         from org.telegram.messenger import AndroidUtilities
         from org.telegram.ui.ActionBar import Theme
-        alpha = self._page_alpha("contacts") if self._page_on("contacts") else 255
-        # Match the section cards exactly: key_windowBackgroundWhite at the page
-        # alpha with the same 12dp radius (GraySectionCell is excluded from the
-        # section-card pass, so it needs its own card-colored background).
-        try:
-            color = Theme.getColor(Theme.key_windowBackgroundWhite)
-        except Exception:
-            color = 0xFFFFFFFF
-        gd = GradientDrawable()
-        gd.setColor(_with_alpha(color, alpha))
-        gd.setCornerRadius(float(AndroidUtilities.dp(12)))
-        cell.setBackground(gd)
+        if self._cg_arrow_bitmap is None:
+            size = AndroidUtilities.dp(16)
+            bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+            canvas = Canvas(bmp)
+            paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            paint.setStyle(Paint.Style.FILL)
+            try:
+                paint.setColor(Theme.getColor(Theme.key_windowBackgroundWhiteGrayIcon))
+            except Exception:
+                paint.setColor(0xFF9AA0A6)
+            m = float(AndroidUtilities.dp(3))
+            s = float(size)
+            path = Path()
+            path.moveTo(m, m)
+            path.lineTo(m, s - m)
+            path.lineTo(s - m, s / 2.0)
+            path.close()
+            canvas.drawPath(path, paint)
+            self._cg_arrow_bitmap = bmp
+        return BitmapDrawable(resources, self._cg_arrow_bitmap)
 
     def _cg_names_changed(self):
         try:
@@ -1421,7 +1423,7 @@ class BubbleGlassPlugin(BasePlugin):
         try:
             child = view.findChildViewUnder(x, y)
             cell = child
-            while cell is not None and "GraySectionCell" not in str(cell.getClass().getName()):
+            while cell is not None and "Cells.TextCell" not in str(cell.getClass().getName()):
                 parent = cell.getParent()
                 if parent is None or parent is view:
                     cell = None
