@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.19"
+__version__ = "1.11.20"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -22,8 +22,8 @@ __permissions__ = ["hooks", "intents", "files"]
 STYLE_THEME, STYLE_CLEAR, STYLE_NIGHT, STYLE_AUTO = 0, 1, 2, 3
 STYLE_ITEMS = ["跟随主题", "晴空", "夜幕", "自动（日间晴空 · 夜间夜幕）"]
 
-HOME_OFF, HOME_IMAGE, HOME_CHAT = 0, 1, 2
-HOME_ITEMS = ["关闭", "自定义图片", "跟随聊天壁纸"]
+HOME_OFF, HOME_IMAGE, HOME_CHAT, HOME_GIF = 0, 1, 2, 3
+HOME_ITEMS = ["关闭", "自定义图片", "跟随聊天壁纸", "动态壁纸（GIF）"]
 HOME_MAX_SIDE = 2560
 
 # (key, label, fragment class, image picker request code)
@@ -921,6 +921,11 @@ class BubbleGlassPlugin(BasePlugin):
         from android.graphics import Bitmap, Canvas, Paint, RectF
         from android.graphics.drawable import BitmapDrawable, Drawable, LayerDrawable
 
+        if self._cfg[page + "_mode"] == HOME_GIF:
+            gif = self._build_page_gif(page, view, w, h, color)
+            if gif is not None:
+                return gif
+
         bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         canvas = Canvas(bitmap)
         canvas.drawColor(_with_alpha(color, 255))
@@ -951,11 +956,56 @@ class BubbleGlassPlugin(BasePlugin):
         # whole view instead of clipping out the action bar area.
         return LayerDrawable(layer)
 
+    def _build_page_gif(self, page, view, w, h, color):
+        from java import jarray
+        from android.graphics import Bitmap, BitmapFactory, Canvas, Paint, RectF
+        from android.graphics.drawable import BitmapDrawable, ColorDrawable, Drawable, LayerDrawable
+        from java.io import File
+
+        path = self._gif_path(page)
+        animated = None
+        try:
+            from android.os import Build
+            if Build.VERSION.SDK_INT >= 28 and os.path.exists(path):
+                from android.graphics import ImageDecoder
+                source = ImageDecoder.createSource(File(path))
+                animated = ImageDecoder.decodeDrawable(source)
+        except Exception:
+            self._report("gif_decode")
+        if animated is None:
+            # Static fallback: first frame of the GIF.
+            if not os.path.exists(path):
+                return None
+            image = BitmapFactory.decodeFile(path)
+            if image is None:
+                return None
+            bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
+            canvas = Canvas(bitmap)
+            canvas.drawColor(_with_alpha(color, 255))
+            bw, bh = image.getWidth(), image.getHeight()
+            scale = max(w / float(bw), h / float(bh))
+            dw, dh = bw * scale, bh * scale
+            left, top = (w - dw) / 2.0, (h - dh) / 2.0
+            canvas.drawBitmap(image, None, RectF(left, top, left + dw, top + dh),
+                              Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG))
+            canvas.drawColor(_with_alpha(color, self._page_alpha(page)))
+            layer = jarray(Drawable)([BitmapDrawable(view.getResources(), bitmap)])
+            return LayerDrawable(layer)
+        overlay = ColorDrawable(_with_alpha(color, self._page_alpha(page)))
+        layer = jarray(Drawable)([animated, overlay])
+        return LayerDrawable(layer)
+
     @staticmethod
     def _page_path(page):
         from file_utils import get_plugin_dir
         directory = get_plugin_dir(__id__)
         return os.path.join(directory, page + "_wallpaper.jpg") if directory else None
+
+    @staticmethod
+    def _gif_path(page):
+        from file_utils import get_plugin_dir
+        directory = get_plugin_dir(__id__)
+        return os.path.join(directory, page + "_wallpaper.gif") if directory else None
 
     def _load_page_bitmap(self, page):
         if page in self._bitmaps:
@@ -1009,6 +1059,9 @@ class BubbleGlassPlugin(BasePlugin):
             from org.telegram.messenger import ApplicationLoader
 
             resolver = ApplicationLoader.applicationContext.getContentResolver()
+            if "gif" in str(resolver.getType(uri)).lower():
+                self._import_gif(page, uri)
+                return
             opts = BitmapFactory.Options()
             opts.inJustDecodeBounds = True
             stream = resolver.openInputStream(uri)
@@ -1047,6 +1100,37 @@ class BubbleGlassPlugin(BasePlugin):
         except Exception:
             self._report("import_image")
             self._bulletin("读取图片失败", error=True)
+
+    def _import_gif(self, page, uri):
+        try:
+            from java.io import FileOutputStream
+            from org.telegram.messenger import ApplicationLoader
+
+            resolver = ApplicationLoader.applicationContext.getContentResolver()
+            stream = resolver.openInputStream(uri)
+            out = FileOutputStream(self._gif_path(page))
+            try:
+                buf = bytearray(8192)
+                while True:
+                    n = stream.read(buf)
+                    if n <= 0:
+                        break
+                    out.write(buf, 0, n)
+            finally:
+                stream.close()
+                out.close()
+
+            def done():
+                self.set_setting(page + "_mode", HOME_GIF)
+                cfg = dict(self._cfg)
+                cfg[page + "_mode"] = HOME_GIF
+                self._apply_cfg(cfg)
+                self._refresh_page(page)
+                self._bulletin("%s动态壁纸已设置" % PAGE_INFO[page][1])
+            self._ui(done)
+        except Exception:
+            self._report("import_gif")
+            self._bulletin("读取动图失败", error=True)
 
     @staticmethod
     def _bulletin(text, error=False):
