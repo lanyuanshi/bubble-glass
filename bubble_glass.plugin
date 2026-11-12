@@ -1,3 +1,4 @@
+import math
 import os
 import random
 import threading
@@ -15,13 +16,14 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.16"
+__version__ = "1.11.17"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
 
 STYLE_THEME, STYLE_CLEAR, STYLE_NIGHT, STYLE_AUTO = 0, 1, 2, 3
 STYLE_ITEMS = ["跟随主题", "晴空", "夜幕", "自动（日间晴空 · 夜间夜幕）"]
+EFFECT_ITEMS = ["雪花", "枫叶", "下雨"]
 
 HOME_OFF, HOME_IMAGE, HOME_CHAT = 0, 1, 2
 HOME_ITEMS = ["关闭", "自定义图片", "跟随聊天壁纸"]
@@ -62,6 +64,7 @@ DEFAULTS = {
     "settings_mode": 0,
     "settings_transparency": 60,
     "snow_on": False,
+    "snow_kind": 0,
     "snow_density": 50,
     "allow_noforwards": False,
 }
@@ -257,6 +260,8 @@ class BubbleGlassPlugin(BasePlugin):
                 "outline": bool(cfg["outline"]),
                 "allow_noforwards": bool(cfg["allow_noforwards"]),
                 "snow_on": bool(cfg.get("snow_on", DEFAULTS["snow_on"])),
+                "snow_kind": (lambda k: k if 0 <= k < len(EFFECT_ITEMS) else 0)(
+                    int(cfg.get("snow_kind", DEFAULTS["snow_kind"]))),
                 "snow_density": max(0.0, min(100.0, float(cfg.get("snow_density", DEFAULTS["snow_density"])))),
             }
             for page in PAGE_INFO:
@@ -273,7 +278,7 @@ class BubbleGlassPlugin(BasePlugin):
             value = SLIDERS[key][5][int(value)]
         cfg[key] = value
         self._apply_cfg(cfg)
-        if key == "snow_density":
+        if key in ("snow_density", "snow_kind"):
             self._snow_bitmap = None
             self._snow_shader = None
             self._snow_paint = None
@@ -359,6 +364,8 @@ class BubbleGlassPlugin(BasePlugin):
             Switch(key="snow_on", text="全局飘雪", default=DEFAULTS["snow_on"], icon="msg_theme",
                    subtext="聊天、主页、联系人、设置及插件设置页都飘雪花，不影响操作",
                    on_change=lambda v: self._on_change("snow_on", v)),
+            Selector(key="snow_kind", text="飘落物", default=DEFAULTS["snow_kind"], items=EFFECT_ITEMS,
+                     icon="msg_colors", on_change=lambda v: self._on_change("snow_kind", v)),
             self._slider_row("snow_density"),
             Divider(text="雪花随页面滚动/刷新而飘动，空闲时保持静止以省电。"),
         ]
@@ -438,23 +445,43 @@ class BubbleGlassPlugin(BasePlugin):
             from android.graphics import Bitmap, BitmapShader, Canvas, Color, Paint, Shader
             size = 256
             density = max(0.0, min(100.0, float(self._cfg.get("snow_density", 50))))
-            count = max(8, int(55 * density / 100.0))
+            kind = int(self._cfg.get("snow_kind", 0))
             bmp = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
             c = Canvas(bmp)
-            paint = Paint(Paint.ANTI_ALIAS_FLAG)
             rnd = random.Random(20261212)
-            for _ in range(count):
-                x = rnd.uniform(2, size - 2)
-                y = rnd.uniform(2, size - 2)
-                r = rnd.uniform(1.6, 5.4)
-                a = rnd.randint(120, 245)
-                paint.setColor(Color.argb(a, 255, 255, 255))
-                c.drawCircle(x, y, r, paint)
+            if kind == 1:  # 枫叶：emoji 彩色枫叶
+                paint = Paint(Paint.ANTI_ALIAS_FLAG)
+                count = max(6, int(40 * density / 100.0))
+                for _ in range(count):
+                    paint.setTextSize(rnd.uniform(22, 42))
+                    c.drawText("\U0001F341", rnd.uniform(4, size - 4), rnd.uniform(4, size - 4), paint)
+            elif kind == 2:  # 下雨：细长斜雨丝
+                paint = Paint(Paint.ANTI_ALIAS_FLAG)
+                paint.setStrokeWidth(1.6)
+                count = max(12, int(130 * density / 100.0))
+                for _ in range(count):
+                    x = rnd.uniform(0, size)
+                    y = rnd.uniform(0, size)
+                    length = rnd.uniform(10, 22)
+                    slant = rnd.uniform(-2.5, 2.5)
+                    a = rnd.randint(90, 205)
+                    paint.setColor(Color.argb(a, 170, 205, 255))
+                    c.drawLine(x, y, x + slant, y + length, paint)
+            else:  # 雪花：白色圆点
+                paint = Paint(Paint.ANTI_ALIAS_FLAG)
+                count = max(8, int(55 * density / 100.0))
+                for _ in range(count):
+                    x = rnd.uniform(2, size - 2)
+                    y = rnd.uniform(2, size - 2)
+                    r = rnd.uniform(1.6, 5.4)
+                    a = rnd.randint(120, 245)
+                    paint.setColor(Color.argb(a, 255, 255, 255))
+                    c.drawCircle(x, y, r, paint)
             self._snow_bitmap = bmp
             self._snow_shader = BitmapShader(bmp, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
             self._snow_paint = Paint()
-            self._snow_paint.setShader(self._snow_shader)
             self._snow_paint.setFilterBitmap(True)
+            self._snow_paint.setShader(self._snow_shader)
             return True
         except Exception:
             self._report("snow_ensure")
@@ -479,9 +506,17 @@ class BubbleGlassPlugin(BasePlugin):
             if width <= 0 or height <= 0 or not self._snow_ensure():
                 return
             now = self._SystemClock.uptimeMillis() / 1000.0
-            offset = (now * 46.0) % 256.0
+            kind = int(self._cfg.get("snow_kind", 0))
+            if kind == 2:
+                speed, sway_amp, sway_freq = 240.0, 0.0, 0.0
+            elif kind == 1:
+                speed, sway_amp, sway_freq = 34.0, 14.0, 0.9
+            else:
+                speed, sway_amp, sway_freq = 46.0, 7.0, 1.3
+            offset = (now * speed) % 256.0
+            sway = math.sin(now * sway_freq) * sway_amp if sway_amp else 0.0
             self._snow_matrix.reset()
-            self._snow_matrix.setTranslate(0.0, offset)
+            self._snow_matrix.setTranslate(sway, offset)
             self._snow_shader.setLocalMatrix(self._snow_matrix)
             canvas.drawRect(0.0, 0.0, width, height, self._snow_paint)
         except Exception:
