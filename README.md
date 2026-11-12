@@ -33,7 +33,7 @@ exteraless / exteraGram 的 Python 插件（Chaquopy）：给聊天气泡、主�
 
 1. 在 exteraless 中打开 `bubble_glass.plugin` 安装（首次会要求授予 **hooks** 钩子权限；壁纸功能还需要 **intents**、**files** 权限）
 2. 安装后**彻底关闭 app 再打开**一次（exteraless 是启动后才加载插件，已经打开的页面需要重建才能生效）
-3. 在插件设置里调整各项参数
+3. 在插件设置里调整各项参数；也可以从主页右上角 ⋮ → 插件 → 霜晚辞 直接进入
 
 ## 兼容性
 

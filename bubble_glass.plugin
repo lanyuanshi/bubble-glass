@@ -2,7 +2,7 @@ import os
 import threading
 import time
 
-from base_plugin import BasePlugin, MethodHook
+from base_plugin import BasePlugin, MethodHook, PluginsController
 from ui.settings import Divider, Header, Input, Selector, Switch, Text
 
 try:
@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.12"
+__version__ = "1.11.13"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -202,6 +202,7 @@ class BubbleGlassPlugin(BasePlugin):
             self._log_error("Failed to hook ChatMessageCell.setVisiblePart")
         self._hook_pages()
         self._hook_noforwards()
+        self._add_main_menu_entry()
 
     def on_plugin_unload(self):
         self._bd_shader = None
@@ -445,6 +446,24 @@ class BubbleGlassPlugin(BasePlugin):
                 self._ar_apply_mark(mark)
         except Exception:
             self._report("anti_recall_init")
+
+    # ---------- main-menu entry ----------
+
+    def _add_main_menu_entry(self):
+        # exteraless groups plugin MAIN_MENU items under the "⋮ → 插件" entry on
+        # the home screen; the callback opens this plugin's settings directly.
+        try:
+            self.add_menu_item(self.MenuType.MAIN_MENU, "霜晚辞",
+                               on_click=self._on_menu_open, item_id="main_settings",
+                               icon="msg_settings")
+        except Exception:
+            self._report("main_menu_entry")
+
+    def _on_menu_open(self, context):
+        try:
+            PluginsController.openPluginSettings(__id__)
+        except Exception:
+            self._report("main_menu_open")
 
     # ---------- page wallpapers (home / contacts / settings) ----------
 
