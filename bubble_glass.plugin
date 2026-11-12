@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.20"
+__version__ = "1.11.21"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -34,6 +34,7 @@ PAGES = (
 )
 PAGE_INFO = {p[0]: p for p in PAGES}
 PAGE_BY_CLASS = {p[2]: p[0] for p in PAGES}
+CHAT_GIF_CODE = 26474
 PAGE_HINTS = {
     "home": "对话列表、顶栏和文件夹标签盖在壁纸上的那层底色有多透。",
     "contacts": "联系人列表底色和卡片有多透。",
@@ -58,6 +59,7 @@ DEFAULTS = {
     "settings_mode": 0,
     "settings_transparency": 60,
     "allow_noforwards": False,
+    "chat_gif_on": False,
 }
 
 PRESETS = {
@@ -174,6 +176,8 @@ class BubbleGlassPlugin(BasePlugin):
         self._frags = {}
         self._cache = {}
         self._bitmaps = {}
+        self._chat_bg_views = {}
+        self._chat_gif = None
         self._gen = {}
         self._fade_saves = []
         self._card_saves = []
@@ -201,6 +205,7 @@ class BubbleGlassPlugin(BasePlugin):
         except Exception:
             self._log_error("Failed to hook ChatMessageCell.setVisiblePart")
         self._hook_pages()
+        self._hook_chat_gif()
         self._hook_noforwards()
         self._add_main_menu_entry()
 
@@ -247,6 +252,7 @@ class BubbleGlassPlugin(BasePlugin):
                 "density": max(0.0, min(100.0, float(cfg["density"]))),
                 "outline": bool(cfg["outline"]),
                 "allow_noforwards": bool(cfg["allow_noforwards"]),
+                "chat_gif_on": bool(cfg["chat_gif_on"]),
             }
             for page in PAGE_INFO:
                 mode = int(cfg[page + "_mode"])
@@ -308,6 +314,12 @@ class BubbleGlassPlugin(BasePlugin):
             Divider(text="模糊取自当前聊天壁纸。改完设置后返回聊天即可看到效果。"),
             Text(text="页面壁纸与透明度", subtext="主页 / 联系人 / 设置 各自的壁纸和透明度",
                  icon="msg_background", accent=True, create_sub_fragment=self._page_sub_rows),
+            Header(text="聊天动态壁纸"),
+            Switch(key="chat_gif_on", text="聊天页动图壁纸", default=DEFAULTS["chat_gif_on"],
+                   subtext="用 GIF 作为聊天背景，安卓 9 以上生效", icon="msg_background",
+                   on_change=lambda v: self._on_change("chat_gif_on", v)),
+            Text(text="选择 GIF…", subtext="从相册选一张 GIF 作为聊天壁纸", icon="msg_gallery",
+                 on_click=lambda *_: self._pick_chat_gif()),
         ] + self._ar_rows() + self._nf_rows()
 
     def _page_sub_rows(self):
@@ -1041,6 +1053,13 @@ class BubbleGlassPlugin(BasePlugin):
     def _on_activity_result(self, param):
         try:
             code = self._as_int(param.args[0])
+            if code == CHAT_GIF_CODE:
+                param.setResult(None)
+                data = param.args[2]
+                if self._as_int(param.args[1]) == -1 or data is None or data.getData() is None:
+                    return
+                threading.Thread(target=self._import_chat_gif, args=(data.getData(),), daemon=True).start()
+                return
             page = next((p for p, _, _, c in PAGES if c == code), None)
             if page is None:
                 return
@@ -1130,6 +1149,120 @@ class BubbleGlassPlugin(BasePlugin):
             self._ui(done)
         except Exception:
             self._report("import_gif")
+            self._bulletin("读取动图失败", error=True)
+
+    def _hook_chat_gif(self):
+        self._try_hook("org.telegram.ui.ChatBackgroundDrawable", "setParent",
+                       _Hook(after=self._on_chat_bg_parent), quiet=True)
+        self._try_hook("org.telegram.ui.ChatBackgroundDrawable", "draw",
+                       _Hook(after=self._on_chat_bg_draw), quiet=True)
+
+    def _on_chat_bg_parent(self, param):
+        try:
+            view = param.args[0] if len(param.args) >= 1 else None
+            if view is not None:
+                self._chat_bg_views[self._ident(param.thisObject)] = view
+        except Exception:
+            self._report("chat_bg_parent")
+
+    def _on_chat_bg_draw(self, param):
+        try:
+            if not self._cfg["chat_gif_on"]:
+                return
+            view = self._chat_bg_views.get(self._ident(param.thisObject))
+            if view is None:
+                return
+            drawable = param.thisObject
+            bounds = drawable.getBounds()
+            if bounds is None or bounds.width() <= 0 or bounds.height() <= 0:
+                return
+            animated = self._chat_gif_drawable(view)
+            if animated is None:
+                return
+            animated.setBounds(bounds.left, bounds.top, bounds.right, bounds.bottom)
+            animated.draw(param.args[0])
+        except Exception:
+            self._report("chat_bg_draw")
+
+    def _chat_gif_drawable(self, view):
+        if self._chat_gif is not None:
+            try:
+                self._chat_gif.setCallback(view)
+            except Exception:
+                pass
+            return self._chat_gif
+        path = self._chat_gif_path()
+        if not path or not os.path.exists(path):
+            return None
+        animated = None
+        try:
+            from android.os import Build
+            if Build.VERSION.SDK_INT >= 28:
+                from android.graphics import ImageDecoder
+                from java.io import File
+                source = ImageDecoder.createSource(File(path))
+                animated = ImageDecoder.decodeDrawable(source)
+        except Exception:
+            self._report("chat_gif_decode")
+        if animated is None:
+            return None
+        try:
+            animated.setCallback(view)
+            animated.start()
+        except Exception:
+            pass
+        self._chat_gif = animated
+        return animated
+
+    @staticmethod
+    def _chat_gif_path():
+        from file_utils import get_plugin_dir
+        directory = get_plugin_dir(__id__)
+        return os.path.join(directory, "chat_wallpaper.gif") if directory else None
+
+    def _pick_chat_gif(self):
+        try:
+            from android.content import Intent
+            from android_utils import get_activity
+            activity = get_activity()
+            if activity is None:
+                return
+            intent = Intent(Intent.ACTION_GET_CONTENT)
+            intent.setType("image/gif")
+            intent.addCategory(Intent.CATEGORY_OPENABLE)
+            activity.startActivityForResult(Intent.createChooser(intent, "选择聊天动图壁纸"), CHAT_GIF_CODE)
+        except Exception:
+            self._report("pick_chat_gif")
+            self._bulletin("打开相册失败", error=True)
+
+    def _import_chat_gif(self, uri):
+        try:
+            from java.io import FileOutputStream
+            from org.telegram.messenger import ApplicationLoader
+            resolver = ApplicationLoader.applicationContext.getContentResolver()
+            stream = resolver.openInputStream(uri)
+            out = FileOutputStream(self._chat_gif_path())
+            try:
+                buf = bytearray(8192)
+                while True:
+                    n = stream.read(buf)
+                    if n <= 0:
+                        break
+                    out.write(buf, 0, n)
+            finally:
+                stream.close()
+                out.close()
+
+            def done():
+                self.set_setting("chat_gif_on", True)
+                cfg = dict(self._cfg)
+                cfg["chat_gif_on"] = True
+                self._apply_cfg(cfg)
+                self._chat_gif = None
+                self._bulletin("聊天动图壁纸已设置")
+            self._ui(done)
+        except Exception:
+            self._report("import_chat_gif")
             self._bulletin("读取动图失败", error=True)
 
     @staticmethod
