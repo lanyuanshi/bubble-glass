@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸，联系人分组、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.11.1"
+__version__ = "1.11.2"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1354,14 +1354,18 @@ class BubbleGlassPlugin(BasePlugin):
             self._report("groups_bind")
 
     def _cg_style_header(self, cell):
-        from android.graphics.drawable import ColorDrawable
+        from android.graphics.drawable import GradientDrawable
+        from org.telegram.ui import AndroidUtilities
         from org.telegram.ui.ActionBar import Theme
         alpha = self._page_alpha("contacts") if self._page_on("contacts") else 255
         try:
             color = Theme.getColor(Theme.key_graySection)
         except Exception:
             color = 0xFF2A2A2A
-        cell.setBackground(ColorDrawable(_with_alpha(color, alpha)))
+        gd = GradientDrawable()
+        gd.setColor(_with_alpha(color, alpha))
+        gd.setCornerRadius(float(AndroidUtilities.dp(12)))
+        cell.setBackground(gd)
 
     def _cg_names_changed(self):
         try:
