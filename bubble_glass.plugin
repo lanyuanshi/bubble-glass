@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.12.7"
+__version__ = "1.12.8"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1808,6 +1808,7 @@ class BubbleGlassPlugin(BasePlugin):
         from android.os import Handler, Looper
         from android.text import TextUtils
         from android.view import Gravity, View
+        from android.view.animation import Animation, LinearInterpolator, RotateAnimation
         from android.widget import FrameLayout, LinearLayout, ScrollView, SeekBar, TextView
         from android_utils import OnClickListener, OnSeekBarChangeListener
         from org.telegram.messenger import AndroidUtilities
@@ -1817,6 +1818,7 @@ class BubbleGlassPlugin(BasePlugin):
         st["ctx"] = ctx
         st.setdefault("repeat", 1)
         st.setdefault("speed", 1.0)
+        st["spinning"] = False
 
         def dp(v):
             return AndroidUtilities.dp(v)
@@ -1826,11 +1828,11 @@ class BubbleGlassPlugin(BasePlugin):
         bg = GradientDrawable()
         try:
             bg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM)
-            bg.setColors([_signed(0xFF7A1048), _signed(0xFFAD1457), _signed(0xFF6A1B9A)])
+            bg.setColors([_signed(0xFF0F0C29), _signed(0xFF302B63), _signed(0xFF24243E)])
         except Exception:
-            bg.setColor(_signed(0xFF7A1048))
+            bg.setColor(_signed(0xFF0F0C29))
         root.setBackground(bg)
-        root.setPadding(dp(22), dp(30), dp(22), dp(18))
+        root.setPadding(dp(20), dp(24), dp(20), dp(16))
 
         # ---- top bar ----
         top = LinearLayout(ctx)
@@ -1839,15 +1841,15 @@ class BubbleGlassPlugin(BasePlugin):
         top.setLayoutParams(LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         back = TextView(ctx)
-        back.setText("✕")
-        back.setTextSize(22)
+        back.setText("←")
+        back.setTextSize(24)
         back.setTextColor(_signed(0xEEFFFFFF))
-        back.setPadding(dp(8), dp(4), dp(8), dp(4))
+        back.setPadding(dp(6), dp(2), dp(6), dp(2))
         back.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_close_player)))
         top.addView(back)
         title_tv = TextView(ctx)
         title_tv.setText("正在播放")
-        title_tv.setTextSize(18)
+        title_tv.setTextSize(17)
         title_tv.setTextColor(_signed(0xFFFFFFFF))
         title_tv.setTypeface(Typeface.DEFAULT_BOLD)
         tlp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
@@ -1856,43 +1858,72 @@ class BubbleGlassPlugin(BasePlugin):
         top.addView(title_tv)
         pad = TextView(ctx)
         pad.setText(" ")
-        pad.setTextSize(22)
-        pad.setPadding(dp(8), dp(4), dp(8), dp(4))
+        pad.setTextSize(24)
+        pad.setPadding(dp(6), dp(2), dp(6), dp(2))
         top.addView(pad)
         root.addView(top)
 
-        # ---- cover art (rounded square) ----
+        # ---- spinning vinyl cover ----
         cover_wrap = FrameLayout(ctx)
         cwl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
                                         LinearLayout.LayoutParams.WRAP_CONTENT)
         cwl.gravity = Gravity.CENTER_HORIZONTAL
-        cwl.setMargins(0, dp(26), 0, dp(8))
+        cwl.setMargins(0, dp(18), 0, dp(6))
         cover_wrap.setLayoutParams(cwl)
 
+        size = dp(240)
         glow = GradientDrawable()
         glow.setShape(GradientDrawable.OVAL)
-        glow.setColor(0x33FFFFFF)
+        glow.setColor(_signed(0x22FFFFFF))
         glow_view = TextView(ctx)
         glow_view.setBackground(glow)
-        cover_wrap.addView(glow_view, FrameLayout.LayoutParams(dp(300), dp(300), Gravity.CENTER))
+        cover_wrap.addView(glow_view,
+                           FrameLayout.LayoutParams(size + dp(40), size + dp(40), Gravity.CENTER))
 
-        cover_bg = GradientDrawable()
-        cover_bg.setCornerRadius(dp(28))
-        cover_bg.setColor(_signed(0xFFAB47BC))
-        cover_bg.setStroke(dp(2), 0x66FFFFFF)
-        cover = TextView(ctx)
-        cover.setText("🎵")
-        cover.setTextSize(110)
-        cover.setGravity(Gravity.CENTER)
-        cover.setBackground(cover_bg)
-        st["cover"] = cover
-        cover_wrap.addView(cover, FrameLayout.LayoutParams(dp(250), dp(250), Gravity.CENTER))
+        vinyl = FrameLayout(ctx)
+        vinyl_bg = GradientDrawable()
+        vinyl_bg.setShape(GradientDrawable.OVAL)
+        try:
+            vinyl_bg.setColors([_signed(0xFF1A1A2E), _signed(0xFF16213E)])
+            vinyl_bg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM)
+        except Exception:
+            vinyl_bg.setColor(_signed(0xFF1A1A2E))
+        vinyl.setBackground(vinyl_bg)
+        st["disc"] = vinyl
+
+        inner = FrameLayout(ctx)
+        art_bg = GradientDrawable()
+        art_bg.setShape(GradientDrawable.OVAL)
+        try:
+            art_bg.setColors([_signed(0xFF7A1048), _signed(0xFFAD1457), _signed(0xFF6A1B9A)])
+            art_bg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM)
+        except Exception:
+            art_bg.setColor(_signed(0xFF7A1048))
+        inner.setBackground(art_bg)
+        note = TextView(ctx)
+        note.setText("🎵")
+        note.setTextSize(72)
+        note.setGravity(Gravity.CENTER)
+        inner.addView(note, FrameLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                                                    LinearLayout.LayoutParams.MATCH_PARENT))
+        inner_size = size - dp(48)
+        vinyl.addView(inner, FrameLayout.LayoutParams(inner_size, inner_size, Gravity.CENTER))
+        st["cover"] = inner
+        cover_wrap.addView(vinyl, FrameLayout.LayoutParams(size, size, Gravity.CENTER))
         root.addView(cover_wrap)
+
+        spin = RotateAnimation(0.0, 360.0, Animation.RELATIVE_TO_SELF, 0.5,
+                               Animation.RELATIVE_TO_SELF, 0.5)
+        spin.setDuration(6000)
+        spin.setRepeatCount(Animation.INFINITE)
+        spin.setRepeatMode(Animation.RESTART)
+        spin.setInterpolator(LinearInterpolator())
+        st["spin"] = spin
 
         # ---- song info ----
         song = TextView(ctx)
         song.setText("未在播放")
-        song.setTextSize(22)
+        song.setTextSize(21)
         song.setTextColor(_signed(0xFFFFFFFF))
         song.setTypeface(Typeface.DEFAULT_BOLD)
         song.setGravity(Gravity.CENTER)
@@ -1954,7 +1985,7 @@ class BubbleGlassPlugin(BasePlugin):
         root.addView(times)
         st["times"] = times
 
-        # ---- transport controls ----
+        # ---- transport controls (Salt Player: shuffle / prev / play / next / repeat) ----
         ctrl = LinearLayout(ctx)
         ctrl.setOrientation(LinearLayout.HORIZONTAL)
         ctrl.setGravity(Gravity.CENTER)
@@ -1963,35 +1994,39 @@ class BubbleGlassPlugin(BasePlugin):
         cl.setMargins(0, dp(2), 0, dp(4))
         ctrl.setLayoutParams(cl)
 
-        def tbtn(text, fn, size=26):
+        def tbtn(text, fn, size=24):
             b = TextView(ctx)
             b.setText(text)
             b.setTextSize(size)
             b.setTextColor(_signed(0xFFFFFFFF))
             b.setGravity(Gravity.CENTER)
-            b.setPadding(dp(18), dp(8), dp(18), dp(8))
+            b.setPadding(dp(14), dp(8), dp(14), dp(8))
             b.setOnClickListener(OnClickListener(lambda v, f=fn: self._ui(f)))
             return b
 
-        ctrl.addView(tbtn("⏮", lambda: self._player_step(-1), 30))
+        st["btn_shuffle"] = tbtn("🔀", self._player_toggle_shuffle)
+        ctrl.addView(st["btn_shuffle"])
+        ctrl.addView(tbtn("⏮", lambda: self._player_step(-1), 28))
 
         play_bg = GradientDrawable()
         play_bg.setShape(GradientDrawable.OVAL)
         play_bg.setColor(_signed(0xFFFFFFFF))
         play = TextView(ctx)
         play.setText("⏸")
-        play.setTextSize(34)
-        play.setTextColor(_signed(0xFFAD1457))
+        play.setTextSize(32)
+        play.setTextColor(_signed(0xFF6A1B9A))
         play.setGravity(Gravity.CENTER)
         play.setBackground(play_bg)
-        pll = LinearLayout.LayoutParams(dp(86), dp(86))
-        pll.setMargins(dp(22), 0, dp(22), 0)
+        pll = LinearLayout.LayoutParams(dp(80), dp(80))
+        pll.setMargins(dp(18), 0, dp(18), 0)
         play.setLayoutParams(pll)
         play.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_toggle)))
         st["btn_play"] = play
         ctrl.addView(play)
 
-        ctrl.addView(tbtn("⏭", lambda: self._player_step(1), 30))
+        ctrl.addView(tbtn("⏭", lambda: self._player_step(1), 28))
+        st["btn_repeat"] = tbtn("🔁", self._player_cycle_repeat)
+        ctrl.addView(st["btn_repeat"])
         root.addView(ctrl)
 
         # ---- bottom utility row ----
@@ -2003,49 +2038,41 @@ class BubbleGlassPlugin(BasePlugin):
         ul.setMargins(0, dp(10), 0, 0)
         util.setLayoutParams(ul)
 
-        def ubtn(text, fn):
+        def ubtn(text, fn, size=18):
             b = TextView(ctx)
             b.setText(text)
-            b.setTextSize(20)
+            b.setTextSize(size)
             b.setTextColor(_signed(0xCCFFFFFF))
             b.setGravity(Gravity.CENTER)
-            b.setPadding(dp(12), dp(6), dp(12), dp(6))
+            b.setPadding(dp(14), dp(6), dp(14), dp(6))
             b.setOnClickListener(OnClickListener(lambda v, f=fn: self._ui(f)))
             return b
-
-        st["btn_repeat"] = ubtn("🔁", self._player_cycle_repeat)
-        util.addView(st["btn_repeat"])
 
         speed = TextView(ctx)
         speed.setText("1x")
         speed.setTextSize(15)
         speed.setTextColor(_signed(0xCCFFFFFF))
         speed.setGravity(Gravity.CENTER)
-        speed.setPadding(dp(12), dp(6), dp(12), dp(6))
+        speed.setPadding(dp(14), dp(6), dp(14), dp(6))
         speed.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_cycle_speed)))
         st["btn_speed"] = speed
         util.addView(speed)
 
-        note = TextView(ctx)
-        note.setText("🎵")
-        note.setTextSize(20)
-        note.setTextColor(_signed(0xFFFFFFFF))
-        note.setGravity(Gravity.CENTER)
-        note.setPadding(dp(12), dp(6), dp(12), dp(6))
-        note.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_toggle_lyrics)))
-        st["btn_note"] = note
-        util.addView(note)
+        st["btn_note"] = ubtn("Aa", self._player_toggle_lyrics)
+        util.addView(st["btn_note"])
 
-        vol_icon = TextView(ctx)
-        vol_icon.setText("🔊")
-        vol_icon.setTextSize(20)
-        vol_icon.setTextColor(_signed(0xCCFFFFFF))
-        vol_icon.setGravity(Gravity.CENTER)
-        vol_icon.setPadding(dp(12), dp(6), dp(12), dp(6))
-        vll = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
-        vll.gravity = Gravity.END | Gravity.CENTER_VERTICAL
-        vol_icon.setLayoutParams(vll)
-        util.addView(vol_icon)
+        fav = ubtn("❥", lambda: None)
+        util.addView(fav)
+
+        more = TextView(ctx)
+        more.setText("⋮")
+        more.setTextSize(22)
+        more.setTextColor(_signed(0xCCFFFFFF))
+        more.setGravity(Gravity.CENTER)
+        mll = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
+        mll.gravity = Gravity.END | Gravity.CENTER_VERTICAL
+        more.setLayoutParams(mll)
+        util.addView(more)
         root.addView(util)
 
         # ---- lyrics panel (hidden by default) ----
@@ -2074,6 +2101,7 @@ class BubbleGlassPlugin(BasePlugin):
 
         st["handler"] = Handler(Looper.getMainLooper())
         return root
+
 
     def _player_cycle_speed(self):
         try:
