@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.13.0"
+__version__ = "1.14.0"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1807,341 +1807,679 @@ class BubbleGlassPlugin(BasePlugin):
         return root
 
     def _player_make_view(self, dialog, ctx):
-        from android.graphics import Bitmap, BitmapFactory, Canvas, Paint, Path, PorterDuff, RectF, Typeface
-        from android.graphics.drawable import BitmapDrawable, GradientDrawable
-        from android.os import Handler, Looper
-        from android.text import TextUtils
-        from android.util import Base64
-        from android.view import Gravity, View
-        from android.widget import FrameLayout, ImageView, LinearLayout, ScrollView, SeekBar, TextView
-        from android_utils import OnClickListener, OnSeekBarChangeListener
-        from org.telegram.messenger import AndroidUtilities
+        try:
+            from android.graphics import Bitmap, BitmapFactory, Canvas, Paint, Path, PorterDuff, RectF, Typeface
+            from android.graphics.drawable import GradientDrawable
+            from android.os import Handler, Looper
+            from android.text import TextUtils
+            from android.util import Base64
+            from android.view import Gravity, View
+            from android.widget import FrameLayout, ImageView, LinearLayout, ScrollView, SeekBar, TextView
+            from android_utils import OnClickListener, OnSeekBarChangeListener
+            from org.telegram.messenger import AndroidUtilities
 
-        st = self._music_state
-        st["dialog"] = dialog
-        st["ctx"] = ctx
-        st.setdefault("repeat", 1)
-        st.setdefault("speed", 1.0)
+            st = self._music_state
+            st["dialog"] = dialog
+            st["ctx"] = ctx
 
-        def dp(v):
-            return AndroidUtilities.dp(v)
+            dp = lambda v: AndroidUtilities.dp(v)
 
-        def decode_asset(b64):
+            def decode_asset(b64):
+                try:
+                    data = Base64.decode(b64, Base64.DEFAULT)
+                    return BitmapFactory.decodeByteArray(data, 0, len(data))
+                except Exception:
+                    return None
+
+            def circle_crop(src, size):
+                out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                canvas = Canvas(out)
+                path = Path()
+                path.addCircle(size / 2.0, size / 2.0, size / 2.0, Path.Direction.CW)
+                canvas.clipPath(path)
+                sw, sh = src.getWidth(), src.getHeight()
+                scale = max(size / float(sw), size / float(sh))
+                dw, dh = sw * scale, sh * scale
+                left, top = (size - dw) / 2.0, (size - dh) / 2.0
+                canvas.drawBitmap(src, None, RectF(left, top, left + dw, top + dh),
+                                  Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG))
+                return out
+
+            def oval_bg(color, stroke_w=0, stroke_color=0):
+                g = GradientDrawable()
+                g.setShape(GradientDrawable.OVAL)
+                g.setColor(_signed(color))
+                if stroke_w:
+                    g.setStroke(dp(stroke_w), _signed(stroke_color))
+                return g
+
+            def tv(text, size, color, bold=False):
+                t = TextView(ctx)
+                t.setText(text)
+                t.setTextSize(size)
+                t.setTextColor(_signed(color))
+                if bold:
+                    t.setTypeface(Typeface.DEFAULT_BOLD)
+                return t
+
+            def icon_btn(text, size=22, pad=None):
+                b = TextView(ctx)
+                b.setText(text)
+                b.setTextSize(size)
+                b.setTextColor(_signed(0xFFFFFFFF))
+                b.setGravity(Gravity.CENTER)
+                p = dp(12) if pad is None else pad
+                b.setPadding(p, p // 2, p, p // 2)
+                return b
+
+            # ---- root + background ----
+            root = FrameLayout(ctx)
+            root.setBackgroundColor(_signed(0xFF0B1026))
+
+            bg_bmp = decode_asset(_ASSET_BG)
+            if bg_bmp is not None:
+                bg_iv = ImageView(ctx)
+                bg_iv.setImageBitmap(bg_bmp)
+                bg_iv.setScaleType(ImageView.ScaleType.CENTER_CROP)
+                root.addView(bg_iv, FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT))
+
+            shade = GradientDrawable()
+            shade.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM)
+            shade.setColors([_signed(0x00000000), _signed(0x550B1026), _signed(0xDD0B1026)])
+            shade_view = View(ctx)
+            shade_view.setBackground(shade)
+            root.addView(shade_view, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT))
+
+            content = LinearLayout(ctx)
+            content.setOrientation(LinearLayout.VERTICAL)
+            top_pad = dp(6)
+            content.setPadding(dp(14), top_pad + dp(2), dp(14), dp(8))
+            root.addView(content, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT))
+
+            # ---- top nav ----
+            nav = LinearLayout(ctx)
+            nav.setOrientation(LinearLayout.HORIZONTAL)
+            nav.setGravity(Gravity.CENTER_VERTICAL)
+            content.addView(nav, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+
+            back = icon_btn("⌄", size=24, pad=dp(4))
+            back.setOnClickListener(OnClickListener(lambda v: self._player_close_player()))
+            nav.addView(back, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+
+            tabs = LinearLayout(ctx)
+            tabs.setOrientation(LinearLayout.HORIZONTAL)
+            tabs.setGravity(Gravity.CENTER)
+            nav.addView(tabs, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0))
+            st["tabs"] = {}
+            for name in ("播放", "歌单", "歌词", "更多"):
+                tab = LinearLayout(ctx)
+                tab.setOrientation(LinearLayout.VERTICAL)
+                tab.setGravity(Gravity.CENTER_HORIZONTAL)
+                t = TextView(ctx)
+                t.setText(name)
+                t.setTextSize(14)
+                t.setGravity(Gravity.CENTER)
+                t.setPadding(dp(6), dp(1), dp(6), dp(1))
+                line = View(ctx)
+                line.setBackgroundColor(_signed(0x00FFFFFF))
+                tab.addView(t, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT))
+                tab.addView(line, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(2)))
+                tlp = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT)
+                tlp.setMargins(dp(4), 0, dp(4), 0)
+                tabs.addView(tab, tlp)
+                st["tabs"][name] = (t, line)
+
+                def make_tab_cb(nm):
+                    def cb(v):
+                        self._player_set_page(st, nm)
+                    return cb
+                tab.setOnClickListener(OnClickListener(make_tab_cb(name)))
+
+            shirt = icon_btn("👕", size=14, pad=dp(6))
+            nav.addView(shirt, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            search = icon_btn("🔍", size=15, pad=dp(6))
+            nav.addView(search, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            dots = icon_btn("⋮", size=22, pad=dp(4))
+            dots.setOnClickListener(OnClickListener(lambda v: self._player_set_page(st, "more")))
+            nav.addView(dots, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+
+            # ---- pages container ----
+            pages = FrameLayout(ctx)
+            pages_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0)
+            pages_lp.setMargins(0, dp(4), 0, 0)
+            content.addView(pages, pages_lp)
+            st["pages"] = {}
+
+            # ===== PLAY page =====
+            main = LinearLayout(ctx)
+            main.setOrientation(LinearLayout.VERTICAL)
+            main.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.CENTER_VERTICAL)
+
+            cover_size = dp(196)
+            cover_wrap = FrameLayout(ctx)
+            wrap_lp = LinearLayout.LayoutParams(cover_size + dp(24), cover_size + dp(24))
+            wrap_lp.setMargins(0, dp(6), 0, dp(4))
+            cover_wrap.setLayoutParams(wrap_lp)
+
+            glow = View(ctx)
+            glow.setBackground(oval_bg(0x554FC3F7))
+            cover_wrap.addView(glow, FrameLayout.LayoutParams(
+                cover_size + dp(20), cover_size + dp(20), Gravity.CENTER))
+            ring = View(ctx)
+            ring.setBackground(oval_bg(0x00000000, stroke_w=3, stroke_color=0xFF64B5F6))
+            cover_wrap.addView(ring, FrameLayout.LayoutParams(
+                cover_size + dp(8), cover_size + dp(8), Gravity.CENTER))
+
+            cover_bmp = decode_asset(_ASSET_COVER)
+            if cover_bmp is not None:
+                try:
+                    cover_bmp = circle_crop(cover_bmp, cover_size)
+                except Exception:
+                    pass
+            cover = ImageView(ctx)
+            if cover_bmp is not None:
+                cover.setImageBitmap(cover_bmp)
+            else:
+                cover.setBackground(oval_bg(0xFF7C4DFF))
+            cover.setScaleType(ImageView.ScaleType.CENTER_CROP)
+            cover_wrap.addView(cover, FrameLayout.LayoutParams(
+                cover_size, cover_size, Gravity.CENTER))
+            main.addView(cover_wrap)
+            st["cover"] = cover
+
+            title_row = LinearLayout(ctx)
+            title_row.setOrientation(LinearLayout.HORIZONTAL)
+            title_row.setGravity(Gravity.CENTER_VERTICAL)
+            tr_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            tr_lp.setMargins(0, dp(12), 0, 0)
+            main.addView(title_row, tr_lp)
+            song = tv("", 20, 0xFFFFFFFF, bold=True)
+            song.setMaxLines(1)
+            song.setEllipsize(TextUtils.TruncateAt.END)
+            title_row.addView(song, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            st["song"] = song
+            sq = TextView(ctx)
+            sq.setText("SQ")
+            sq.setTextSize(10)
+            sq.setTextColor(_signed(0xFFFFFFFF))
+            sq.setTypeface(Typeface.DEFAULT_BOLD)
+            sq_bg = GradientDrawable()
+            sq_bg.setCornerRadius(dp(4))
+            sq_bg.setColor(_signed(0xFF64B5F6))
+            sq.setBackground(sq_bg)
+            sq.setPadding(dp(4), dp(1), dp(4), dp(1))
+            sq_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            sq_lp.setMargins(dp(6), 0, 0, 0)
+            sq_lp.gravity = Gravity.CENTER_VERTICAL
+            title_row.addView(sq, sq_lp)
+
+            artist_row = LinearLayout(ctx)
+            artist_row.setOrientation(LinearLayout.HORIZONTAL)
+            artist_row.setGravity(Gravity.CENTER_VERTICAL)
+            ar_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            ar_lp.setMargins(0, dp(4), 0, 0)
+            main.addView(artist_row, ar_lp)
+            person = tv("👤", 13, 0xDDFFFFFF)
+            artist_row.addView(person, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            artist = tv("", 14, 0xCCFFFFFF)
+            artist.setMaxLines(1)
+            artist.setEllipsize(TextUtils.TruncateAt.END)
+            a_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            a_lp.setMargins(dp(4), 0, 0, 0)
+            artist_row.addView(artist, a_lp)
+            st["artist"] = artist
+
+            album_row = LinearLayout(ctx)
+            album_row.setOrientation(LinearLayout.HORIZONTAL)
+            album_row.setGravity(Gravity.CENTER_VERTICAL)
+            alb_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            alb_lp.setMargins(0, dp(2), 0, 0)
+            main.addView(album_row, alb_lp)
+            note = tv("♪", 13, 0x99FFFFFF)
+            album_row.addView(note, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            album = tv("", 13, 0x99FFFFFF)
+            album.setMaxLines(1)
+            album.setEllipsize(TextUtils.TruncateAt.END)
+            al_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            al_lp.setMargins(dp(4), 0, 0, 0)
+            album_row.addView(album, al_lp)
+            st["album"] = album
+
+            seek = SeekBar(ctx)
+            seek.setMax(1000)
             try:
-                data = Base64.decode(b64, Base64.DEFAULT)
-                return BitmapFactory.decodeByteArray(data, 0, len(data))
-            except Exception:
-                return None
-
-        def circle_crop(src, size):
-            out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-            canvas = Canvas(out)
-            path = Path()
-            path.addCircle(size / 2.0, size / 2.0, size / 2.0, Path.Direction.CW)
-            canvas.clipPath(path)
-            sw, sh = src.getWidth(), src.getHeight()
-            scale = max(size / float(sw), size / float(sh))
-            dw, dh = sw * scale, sh * scale
-            left, top = (size - dw) / 2.0, (size - dh) / 2.0
-            canvas.drawBitmap(src, None, RectF(left, top, left + dw, top + dh),
-                              Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG))
-            return out
-
-        root = FrameLayout(ctx)
-        root.setBackgroundColor(_signed(0xFF0B1026))
-
-        # ---- background image ----
-        bg_bmp = decode_asset(_ASSET_BG)
-        if bg_bmp is not None:
-            bg_iv = ImageView(ctx)
-            bg_iv.setImageBitmap(bg_bmp)
-            bg_iv.setScaleType(ImageView.ScaleType.CENTER_CROP)
-            root.addView(bg_iv, FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-
-        # bottom readability gradient
-        shade = GradientDrawable()
-        shade.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM)
-        shade.setColors([_signed(0x00000000), _signed(0x660B1026), _signed(0xCC0B1026)])
-        root.addView(View(ctx), FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-        root.getChildAt(root.getChildCount() - 1).setBackground(shade)
-
-        content = LinearLayout(ctx)
-        content.setOrientation(LinearLayout.VERTICAL)
-        content.setPadding(dp(20), dp(22), dp(20), dp(14))
-        root.addView(content, FrameLayout.LayoutParams(
-            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-
-        # ---- top bar ----
-        top = LinearLayout(ctx)
-        top.setOrientation(LinearLayout.HORIZONTAL)
-        top.setGravity(Gravity.CENTER_VERTICAL)
-        top.setLayoutParams(LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
-        back = TextView(ctx)
-        back.setText("←")
-        back.setTextSize(24)
-        back.setTextColor(_signed(0xFFFFFFFF))
-        back.setPadding(dp(6), dp(2), dp(12), dp(2))
-        back.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_close_player)))
-        top.addView(back)
-
-        tabs = LinearLayout(ctx)
-        tabs.setOrientation(LinearLayout.HORIZONTAL)
-        tabs.setGravity(Gravity.CENTER)
-        tlp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
-        tabs.setLayoutParams(tlp)
-        for label, on in (("播放", True), ("歌单", False), ("歌词", False), ("更多", False)):
-            t = TextView(ctx)
-            t.setText(label)
-            t.setTextSize(14)
-            t.setTextColor(_signed(0xFFFFFFFF) if on else _signed(0x99FFFFFF))
-            t.setTypeface(Typeface.DEFAULT_BOLD if on else Typeface.DEFAULT)
-            t.setPadding(dp(10), dp(4), dp(10), dp(4))
-            tabs.addView(t)
-        top.addView(tabs)
-
-        more = TextView(ctx)
-        more.setText("⋮")
-        more.setTextSize(22)
-        more.setTextColor(_signed(0xFFFFFFFF))
-        more.setPadding(dp(6), dp(2), dp(6), dp(2))
-        top.addView(more)
-        content.addView(top)
-
-        # ---- circular album art with glow ----
-        cover_size = dp(210)
-        cover_wrap = FrameLayout(ctx)
-        cwl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-                                        LinearLayout.LayoutParams.WRAP_CONTENT)
-        cwl.gravity = Gravity.CENTER_HORIZONTAL
-        cwl.setMargins(0, dp(20), 0, dp(6))
-        cover_wrap.setLayoutParams(cwl)
-
-        glow = GradientDrawable()
-        glow.setShape(GradientDrawable.OVAL)
-        glow.setColor(_signed(0x33FFFFFF))
-        glow_view = TextView(ctx)
-        glow_view.setBackground(glow)
-        cover_wrap.addView(glow_view, FrameLayout.LayoutParams(
-            cover_size + dp(36), cover_size + dp(36), Gravity.CENTER))
-
-        cover_bmp = decode_asset(_ASSET_COVER)
-        if cover_bmp is not None:
-            try:
-                cover_bmp = circle_crop(cover_bmp, cover_size)
+                pd = seek.getProgressDrawable()
+                if pd is not None:
+                    pd.setColorFilter(_signed(0xFFFFFFFF), PorterDuff.Mode.SRC_IN)
             except Exception:
                 pass
-        cover = ImageView(ctx)
-        if cover_bmp is not None:
-            cover.setImageBitmap(cover_bmp)
-        else:
-            cover.setImageBitmap(None)
-            fallback = GradientDrawable()
-            fallback.setShape(GradientDrawable.OVAL)
-            fallback.setColor(_signed(0xFF6A1B9A))
-            cover.setBackground(fallback)
-        cover.setScaleType(ImageView.ScaleType.FIT_CENTER)
-        st["cover"] = cover
-        cover_wrap.addView(cover, FrameLayout.LayoutParams(cover_size, cover_size, Gravity.CENTER))
-        content.addView(cover_wrap)
+            seek.setOnSeekBarChangeListener(OnSeekBarChangeListener(
+                lambda sb, prog, from_user: self._player_on_seek_change(prog, from_user),
+                lambda sb, prog: None,
+                lambda sb: self._player_on_seek_stop(sb.getProgress())))
+            seek_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            seek_lp.setMargins(dp(6), dp(16), dp(6), 0)
+            main.addView(seek, seek_lp)
+            st["seek"] = seek
 
-        # ---- song info ----
-        song = TextView(ctx)
-        song.setText("未在播放")
-        song.setTextSize(20)
-        song.setTextColor(_signed(0xFFFFFFFF))
-        song.setTypeface(Typeface.DEFAULT_BOLD)
-        song.setGravity(Gravity.CENTER)
-        song.setSingleLine(True)
-        song.setEllipsize(TextUtils.TruncateAt.END)
-        sl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                                       LinearLayout.LayoutParams.WRAP_CONTENT)
-        sl.setMargins(0, dp(14), 0, 0)
-        song.setLayoutParams(sl)
-        content.addView(song)
-        st["song"] = song
+            times_row = LinearLayout(ctx)
+            times_row.setOrientation(LinearLayout.HORIZONTAL)
+            times_row.setGravity(Gravity.CENTER_VERTICAL)
+            tm_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            tm_lp.setMargins(dp(6), dp(2), dp(6), 0)
+            main.addView(times_row, tm_lp)
+            time_cur = tv("0:00", 12, 0xAAFFFFFF)
+            time_cur.setGravity(Gravity.LEFT)
+            times_row.addView(time_cur, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            spacer = View(ctx)
+            times_row.addView(spacer, LinearLayout.LayoutParams(0, 1, 1.0))
+            time_dur = tv("0:00", 12, 0xAAFFFFFF)
+            time_dur.setGravity(Gravity.RIGHT)
+            times_row.addView(time_dur, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            st["time_cur"] = time_cur
+            st["time_dur"] = time_dur
+            st["times"] = time_cur
 
-        artist = TextView(ctx)
-        artist.setText("")
-        artist.setTextSize(14)
-        artist.setTextColor(_signed(0xCCFFFFFF))
-        artist.setGravity(Gravity.CENTER)
-        artist.setSingleLine(True)
-        artist.setEllipsize(TextUtils.TruncateAt.END)
-        al = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                                       LinearLayout.LayoutParams.WRAP_CONTENT)
-        al.setMargins(0, dp(4), 0, dp(10))
-        artist.setLayoutParams(al)
-        content.addView(artist)
-        st["artist"] = artist
+            ctrl = LinearLayout(ctx)
+            ctrl.setOrientation(LinearLayout.HORIZONTAL)
+            ctrl.setGravity(Gravity.CENTER)
+            ctrl_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            ctrl_lp.setMargins(0, dp(8), 0, 0)
+            main.addView(ctrl, ctrl_lp)
 
-        # ---- seek bar ----
-        seek = SeekBar(ctx)
-        seek.setMax(1000)
-        try:
-            seek.getProgressDrawable().setColorFilter(_signed(0xFFFFFFFF), PorterDuff.Mode.SRC_IN)
-        except Exception:
-            pass
-        try:
-            thumb = GradientDrawable()
-            thumb.setShape(GradientDrawable.OVAL)
-            thumb.setColor(_signed(0xFFFFFFFF))
-            thumb.setSize(dp(12), dp(12))
-            seek.setThumb(thumb)
-            seek.setThumbOffset(dp(6))
-        except Exception:
-            pass
-        seek.setOnSeekBarChangeListener(OnSeekBarChangeListener(
-            lambda sb, prog, from_user: self._player_on_seek_change(prog, from_user),
-            lambda sb: None,
-            lambda sb: self._player_on_seek_stop(sb.getProgress())))
-        st["seek"] = seek
-        content.addView(seek)
+            btn_repeat = icon_btn("🔁", size=22, pad=dp(12))
+            btn_repeat.setOnClickListener(OnClickListener(lambda v: self._player_cycle_repeat()))
+            ctrl.addView(btn_repeat, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            st["btn_repeat"] = btn_repeat
 
-        times = TextView(ctx)
-        times.setText("0:00 / 0:00")
-        times.setTextSize(12)
-        times.setTextColor(_signed(0xAAFFFFFF))
-        times.setGravity(Gravity.CENTER)
-        ttl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                                        LinearLayout.LayoutParams.WRAP_CONTENT)
-        ttl.setMargins(0, dp(2), 0, dp(8))
-        times.setLayoutParams(ttl)
-        content.addView(times)
-        st["times"] = times
+            btn_prev = icon_btn("⏮", size=26, pad=dp(12))
+            btn_prev.setOnClickListener(OnClickListener(lambda v: self._player_step(-1)))
+            p_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            p_lp.setMargins(dp(10), 0, dp(10), 0)
+            ctrl.addView(btn_prev, p_lp)
 
-        # ---- transport controls ----
-        ctrl = LinearLayout(ctx)
-        ctrl.setOrientation(LinearLayout.HORIZONTAL)
-        ctrl.setGravity(Gravity.CENTER)
-        cl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                                       LinearLayout.LayoutParams.WRAP_CONTENT)
-        cl.setMargins(0, dp(2), 0, dp(4))
-        ctrl.setLayoutParams(cl)
+            play_wrap = FrameLayout(ctx)
+            pw_wrap = dp(94)
+            pw_circle = dp(78)
+            play_wrap.setLayoutParams(LinearLayout.LayoutParams(pw_wrap, pw_wrap))
+            pglow = View(ctx)
+            pglow.setBackground(oval_bg(0x554FC3F7))
+            play_wrap.addView(pglow, FrameLayout.LayoutParams(
+                pw_wrap, pw_wrap, Gravity.CENTER))
+            pbg = View(ctx)
+            pbg.setBackground(oval_bg(0xFFFFFFFF, stroke_w=3, stroke_color=0xFF64B5F6))
+            play_wrap.addView(pbg, FrameLayout.LayoutParams(pw_circle, pw_circle, Gravity.CENTER))
+            btn_play = TextView(ctx)
+            btn_play.setText("▶")
+            btn_play.setTextSize(28)
+            btn_play.setTextColor(_signed(0xFF7C4DFF))
+            btn_play.setGravity(Gravity.CENTER)
+            btn_play.setTypeface(Typeface.DEFAULT_BOLD)
+            btn_play.setOnClickListener(OnClickListener(lambda v: self._player_toggle()))
+            play_wrap.addView(btn_play, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT))
+            ctrl.addView(play_wrap, LinearLayout.LayoutParams(pw_wrap, pw_wrap))
+            st["btn_play"] = btn_play
 
-        def tbtn(text, fn, size=26):
-            b = TextView(ctx)
-            b.setText(text)
-            b.setTextSize(size)
-            b.setTextColor(_signed(0xFFFFFFFF))
-            b.setGravity(Gravity.CENTER)
-            b.setPadding(dp(18), dp(8), dp(18), dp(8))
-            b.setOnClickListener(OnClickListener(lambda v, f=fn: self._ui(f)))
-            return b
+            btn_next = icon_btn("⏭", size=26, pad=dp(12))
+            btn_next.setOnClickListener(OnClickListener(lambda v: self._player_step(1)))
+            n_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            n_lp.setMargins(dp(10), 0, dp(10), 0)
+            ctrl.addView(btn_next, n_lp)
 
-        ctrl.addView(tbtn("🔁", self._player_cycle_repeat, 24))
-        ctrl.addView(tbtn("⏮", lambda: self._player_step(-1), 30))
+            btn_note = icon_btn("📋", size=22, pad=dp(12))
+            btn_note.setOnClickListener(OnClickListener(lambda v: self._player_toggle_lyrics()))
+            ctrl.addView(btn_note, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            st["btn_note"] = btn_note
 
-        play_bg = GradientDrawable()
-        play_bg.setShape(GradientDrawable.OVAL)
-        play_bg.setColor(_signed(0xFFFFFFFF))
-        play = TextView(ctx)
-        play.setText("⏸")
-        play.setTextSize(32)
-        play.setTextColor(_signed(0xFF6A1B9A))
-        play.setGravity(Gravity.CENTER)
-        play.setBackground(play_bg)
-        pll = LinearLayout.LayoutParams(dp(84), dp(84))
-        pll.setMargins(dp(22), 0, dp(22), 0)
-        play.setLayoutParams(pll)
-        play.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_toggle)))
-        st["btn_play"] = play
-        ctrl.addView(play)
+            pages.addView(main, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT))
+            st["pages"]["play"] = main
 
-        ctrl.addView(tbtn("⏭", lambda: self._player_step(1), 30))
-        ctrl.addView(tbtn("📋", lambda: self._player_toggle_lyrics, 22))
-        root.addView(ctrl) if False else content.addView(ctrl)
+            # ===== LYRICS page =====
+            lscroll = ScrollView(ctx)
+            lscroll.setFillViewport(True)
+            lbox = LinearLayout(ctx)
+            lbox.setOrientation(LinearLayout.VERTICAL)
+            lbox.setGravity(Gravity.CENTER_HORIZONTAL)
+            lbox.setPadding(dp(8), dp(8), dp(8), dp(8))
+            lscroll.addView(lbox)
+            empty = tv("暂无歌词", 14, 0xAAFFFFFF)
+            empty.setGravity(Gravity.CENTER)
+            lbox.addView(empty)
+            st["lyrics"] = empty
+            st["lyrics_box"] = lbox
+            st["lyric_views"] = []
+            st["scroll"] = lscroll
+            pages.addView(lscroll, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT))
+            lscroll.setVisibility(View.GONE)
+            st["pages"]["lyrics"] = lscroll
 
-        # ---- bottom "now playing" card ----
-        card = LinearLayout(ctx)
-        card.setOrientation(LinearLayout.HORIZONTAL)
-        card.setGravity(Gravity.CENTER_VERTICAL)
-        card_bg = GradientDrawable()
-        card_bg.setCornerRadius(dp(18))
-        card_bg.setColor(_signed(0x33FFFFFF))
-        card_bg.setStroke(dp(1), _signed(0x22FFFFFF))
-        card.setBackground(card_bg)
-        cl2 = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                                        LinearLayout.LayoutParams.WRAP_CONTENT)
-        cl2.setMargins(0, dp(10), 0, 0)
-        cl2.gravity = Gravity.BOTTOM
-        card.setLayoutParams(cl2)
-        small_size = dp(44)
-        small = ImageView(ctx)
-        if cover_bmp is not None:
+            # ===== PLAYLIST page =====
+            pscroll = ScrollView(ctx)
+            pbox = LinearLayout(ctx)
+            pbox.setOrientation(LinearLayout.VERTICAL)
+            pbox.setPadding(dp(4), dp(4), dp(4), dp(4))
+            pscroll.addView(pbox)
             try:
-                small_bmp = circle_crop(cover_bmp, small_size)
-                small.setImageBitmap(small_bmp)
+                self._player_ensure_playlist()
             except Exception:
-                small.setImageBitmap(cover_bmp)
-        small.setScaleType(ImageView.ScaleType.FIT_CENTER)
-        sllp = LinearLayout.LayoutParams(small_size, small_size)
-        sllp.setMargins(0, 0, dp(12), 0)
-        card.addView(small, sllp)
-        info = LinearLayout(ctx)
-        info.setOrientation(LinearLayout.VERTICAL)
-        info_lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
-        card.addView(info, info_lp)
-        card_song = TextView(ctx)
-        card_song.setText("未在播放")
-        card_song.setTextSize(14)
-        card_song.setTextColor(_signed(0xFFFFFFFF))
-        card_song.setTypeface(Typeface.DEFAULT_BOLD)
-        card_song.setSingleLine(True)
-        card_song.setEllipsize(TextUtils.TruncateAt.END)
-        info.addView(card_song)
-        st["card_song"] = card_song
-        card_artist = TextView(ctx)
-        card_artist.setText("")
-        card_artist.setTextSize(12)
-        card_artist.setTextColor(_signed(0xAAFFFFFF))
-        card_artist.setSingleLine(True)
-        card_artist.setEllipsize(TextUtils.TruncateAt.END)
-        info.addView(card_artist)
-        st["card_artist"] = card_artist
-        eq = TextView(ctx)
-        eq.setText("〰")
-        eq.setTextSize(20)
-        eq.setTextColor(_signed(0xFFFFFFFF))
-        eq.setPadding(dp(8), dp(4), dp(8), dp(4))
-        card.addView(eq)
-        dots = TextView(ctx)
-        dots.setText("⋮")
-        dots.setTextSize(20)
-        dots.setTextColor(_signed(0xFFFFFFFF))
-        dots.setPadding(dp(8), dp(4), dp(8), dp(4))
-        card.addView(dots)
-        content.addView(card)
+                pass
+            msgs = st.get("playlist") or []
+            if not msgs:
+                pempty = tv("暂无播放列表", 14, 0xAAFFFFFF)
+                pempty.setGravity(Gravity.CENTER)
+                pbox.addView(pempty)
+            else:
+                for i, m in enumerate(msgs):
+                    try:
+                        title = self._music_title(m)
+                    except Exception:
+                        title = "音频"
+                    try:
+                        artist = m.getMusicPerformer() or ""
+                    except Exception:
+                        artist = ""
+                    row = LinearLayout(ctx)
+                    row.setOrientation(LinearLayout.HORIZONTAL)
+                    row.setGravity(Gravity.CENTER_VERTICAL)
+                    row.setPadding(dp(10), dp(9), dp(10), dp(9))
+                    try:
+                        row_bg = GradientDrawable()
+                        row_bg.setCornerRadius(dp(10))
+                        row_bg.setColor(_signed(0x22FFFFFF))
+                        row.setBackground(row_bg)
+                    except Exception:
+                        pass
+                    idx_tv = tv(str(i + 1), 13, 0x88FFFFFF)
+                    idx_tv.setGravity(Gravity.CENTER)
+                    row.addView(idx_tv, LinearLayout.LayoutParams(dp(30),
+                        LinearLayout.LayoutParams.WRAP_CONTENT))
+                    info = LinearLayout(ctx)
+                    info.setOrientation(LinearLayout.VERTICAL)
+                    t = tv(title, 15, 0xFFFFFFFF, bold=True)
+                    t.setMaxLines(1)
+                    t.setEllipsize(TextUtils.TruncateAt.END)
+                    info.addView(t, LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT))
+                    a = tv(artist or "未知艺术家", 12, 0x99FFFFFF)
+                    a.setMaxLines(1)
+                    a.setEllipsize(TextUtils.TruncateAt.END)
+                    info.addView(a, LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT))
+                    info_lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
+                    info_lp.setMargins(dp(8), 0, 0, 0)
+                    row.addView(info, info_lp)
+                    row.setOnClickListener(OnClickListener(lambda v, ii=i: self._player_play_index(ii)))
+                    row_lp = LinearLayout.LayoutParams(
+                        LinearLayout.LayoutParams.MATCH_PARENT,
+                        LinearLayout.LayoutParams.WRAP_CONTENT)
+                    row_lp.setMargins(0, dp(3), 0, dp(3))
+                    pbox.addView(row, row_lp)
+            pages.addView(pscroll, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT))
+            pscroll.setVisibility(View.GONE)
+            st["pages"]["playlist"] = pscroll
+            st["playlist_box"] = pbox
 
-        # ---- lyrics panel (hidden by default) ----
-        scroll = ScrollView(ctx)
-        sll = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0)
-        sll.setMargins(0, dp(6), 0, 0)
-        scroll.setLayoutParams(sll)
-        scroll.setVisibility(View.GONE)
-        box = LinearLayout(ctx)
-        box.setOrientation(LinearLayout.VERTICAL)
-        box.setGravity(Gravity.CENTER_HORIZONTAL)
-        box.setPadding(dp(8), dp(8), dp(8), dp(8))
-        scroll.addView(box)
-        empty = TextView(ctx)
-        empty.setText("暂无歌词")
-        empty.setTextSize(14)
-        empty.setTextColor(_signed(0xAAFFFFFF))
-        empty.setGravity(Gravity.CENTER)
-        box.addView(empty)
-        st["lyrics"] = empty
-        st["lyrics_box"] = box
-        st["lyric_views"] = []
-        st["scroll"] = scroll
-        st["lyrics_visible"] = False
-        content.addView(scroll)
+            # ===== MORE page =====
+            more = LinearLayout(ctx)
+            more.setOrientation(LinearLayout.VERTICAL)
+            more.setPadding(dp(8), dp(10), dp(8), dp(10))
 
-        st["handler"] = Handler(Looper.getMainLooper())
-        return root
+            def more_row(label, value_view):
+                r = LinearLayout(ctx)
+                r.setOrientation(LinearLayout.HORIZONTAL)
+                r.setGravity(Gravity.CENTER_VERTICAL)
+                r.setPadding(dp(12), dp(12), dp(12), dp(12))
+                try:
+                    rbg = GradientDrawable()
+                    rbg.setCornerRadius(dp(12))
+                    rbg.setColor(_signed(0x22FFFFFF))
+                    r.setBackground(rbg)
+                except Exception:
+                    pass
+                lt = tv(label, 15, 0xEEFFFFFF)
+                r.addView(lt, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0))
+                r.addView(value_view, LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT))
+                mlp = LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT)
+                mlp.setMargins(0, dp(4), 0, dp(4))
+                more.addView(r, mlp)
 
+            spd_btn = icon_btn("1x", size=15, pad=dp(10))
+            spd_btn.setTextColor(_signed(0xFF64B5F6))
+            spd_btn.setOnClickListener(OnClickListener(lambda v: self._player_cycle_speed()))
+            more_row("播放速度", spd_btn)
+            st["btn_speed"] = spd_btn
+
+            rep_btn = icon_btn("🔁", size=18, pad=dp(10))
+            rep_btn.setOnClickListener(OnClickListener(lambda v: self._player_cycle_repeat()))
+            more_row("循环模式", rep_btn)
+            st["btn_repeat_more"] = rep_btn
+
+            vol = tv("%d%%" % self._player_system_volume(), 15, 0xFF64B5F6, bold=True)
+            more_row("系统音量", vol)
+
+            clr = icon_btn("🗑", size=16, pad=dp(10))
+            clr.setTextColor(_signed(0xFFFF8A80))
+            clr.setOnClickListener(OnClickListener(lambda v: self._player_clear_lyrics("已清空歌词")))
+            more_row("清除歌词", clr)
+
+            pages.addView(more, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT))
+            more.setVisibility(View.GONE)
+            st["pages"]["more"] = more
+
+            # ---- bottom now-playing card ----
+            card = LinearLayout(ctx)
+            card.setOrientation(LinearLayout.HORIZONTAL)
+            card.setGravity(Gravity.CENTER_VERTICAL)
+            card_bg = GradientDrawable()
+            card_bg.setCornerRadius(dp(18))
+            card_bg.setColor(_signed(0x33FFFFFF))
+            card_bg.setStroke(dp(1), _signed(0x22FFFFFF))
+            card.setBackground(card_bg)
+            card.setPadding(dp(10), dp(8), dp(10), dp(8))
+            card_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            card_lp.setMargins(0, dp(8), 0, 0)
+            content.addView(card, card_lp)
+
+            card_play = icon_btn("▶", size=16, pad=dp(8))
+            card_play.setOnClickListener(OnClickListener(lambda v: self._player_toggle()))
+            card.addView(card_play, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+
+            card_playing = tv("当前播放", 12, 0xEEFFFFFF)
+            cp_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            cp_lp.setMargins(dp(8), 0, 0, 0)
+            card.addView(card_playing, cp_lp)
+            st["card_playing"] = card_playing
+
+            card_art_size = dp(42)
+            card_art = ImageView(ctx)
+            card_art.setScaleType(ImageView.ScaleType.CENTER_CROP)
+            card_bmp = decode_asset(_ASSET_COVER)
+            if card_bmp is not None:
+                try:
+                    card_bmp = circle_crop(card_bmp, card_art_size)
+                except Exception:
+                    pass
+                card_art.setImageBitmap(card_bmp)
+            else:
+                card_art.setBackground(oval_bg(0xFF7C4DFF))
+            ca_lp = LinearLayout.LayoutParams(card_art_size, card_art_size)
+            ca_lp.setMargins(dp(10), 0, 0, 0)
+            card.addView(card_art, ca_lp)
+
+            card_info = LinearLayout(ctx)
+            card_info.setOrientation(LinearLayout.VERTICAL)
+            ci_lp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
+            ci_lp.setMargins(dp(10), 0, dp(6), 0)
+            card.addView(card_info, ci_lp)
+
+            card_title_row = LinearLayout(ctx)
+            card_title_row.setOrientation(LinearLayout.HORIZONTAL)
+            card_title_row.setGravity(Gravity.CENTER_VERTICAL)
+            card_info.addView(card_title_row, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            card_song = tv("", 14, 0xFFFFFFFF, bold=True)
+            card_song.setMaxLines(1)
+            card_song.setEllipsize(TextUtils.TruncateAt.END)
+            card_title_row.addView(card_song, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            csq = TextView(ctx)
+            csq.setText("SQ")
+            csq.setTextSize(8)
+            csq.setTextColor(_signed(0xFFFFFFFF))
+            csq.setTypeface(Typeface.DEFAULT_BOLD)
+            csq.setBackground(sq_bg)
+            csq.setPadding(dp(3), 0, dp(3), 0)
+            csq_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            csq_lp.setMargins(dp(4), 0, 0, 0)
+            card_title_row.addView(csq, csq_lp)
+            st["card_song"] = card_song
+
+            card_artist = tv("", 12, 0xCCFFFFFF)
+            card_artist.setMaxLines(1)
+            card_artist.setEllipsize(TextUtils.TruncateAt.END)
+            ca2_lp = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT)
+            ca2_lp.setMargins(0, dp(2), 0, 0)
+            card_info.addView(card_artist, ca2_lp)
+            st["card_artist"] = card_artist
+
+            eq = icon_btn("📊", size=18, pad=dp(8))
+            eq.setOnClickListener(OnClickListener(lambda v: self._player_toggle_lyrics()))
+            card.addView(eq, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+            cdots = icon_btn("⋮", size=22, pad=dp(6))
+            cdots.setOnClickListener(OnClickListener(lambda v: self._player_set_page(st, "more")))
+            card.addView(cdots, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT))
+
+            self._player_set_page(st, "play")
+            st["handler"] = Handler(Looper.getMainLooper())
+            return root
+        except Exception as e:
+            self._report("player_make_view: %s" % e)
+            try:
+                fb = self._player_fallback_view(ctx)
+                return fb
+            except Exception:
+                v = View(ctx)
+                v.setBackgroundColor(_signed(0xFF10203A))
+                return v
+
+    def _player_set_page(self, st, name):
+        try:
+            from android.graphics import Typeface
+            from android.view import View
+            mapping = {"播放": "play", "歌单": "playlist", "歌词": "lyrics", "更多": "more"}
+            key = mapping.get(name, name)
+            pages = st.get("pages") or {}
+            for k, v in pages.items():
+                v.setVisibility(View.VISIBLE if k == key else View.GONE)
+            st["page"] = key
+            tabs = st.get("tabs") or {}
+            for tab_name, pair in tabs.items():
+                active = (mapping.get(tab_name) == key)
+                t, line = pair
+                t.setTextColor(_signed(0xFFFFFFFF) if active else _signed(0x99FFFFFF))
+                t.setTypeface(Typeface.DEFAULT_BOLD if active else Typeface.DEFAULT)
+                line.setBackgroundColor(_signed(0xFFFFFFFF) if active else _signed(0x00FFFFFF))
+        except Exception:
+            self._report("player_page")
+
+    def _player_album(self, msg):
+        try:
+            a = msg.getMusicAlbum()
+            if a:
+                return a
+        except Exception:
+            pass
+        return "未知专辑"
 
     def _player_cycle_speed(self):
         try:
@@ -2181,17 +2519,11 @@ class BubbleGlassPlugin(BasePlugin):
 
     def _player_toggle_lyrics(self):
         try:
-            from android.view import View
             st = self._music_state
-            scroll = st.get("scroll")
-            if scroll is None:
-                return
-            show = not bool(st.get("lyrics_visible"))
-            st["lyrics_visible"] = show
-            scroll.setVisibility(View.VISIBLE if show else View.GONE)
-            note = st.get("btn_note")
-            if note is not None:
-                note.setTextColor(_signed(0xFFFFFFFF) if show else _signed(0xCCFFFFFF))
+            if st.get("page") == "lyrics":
+                self._player_set_page(st, "play")
+            else:
+                self._player_set_page(st, "lyrics")
         except Exception:
             self._report("player_lyrics_toggle")
 
@@ -2228,7 +2560,12 @@ class BubbleGlassPlugin(BasePlugin):
                 dur = mc.getDuration()
                 if cur is not None and dur > 0:
                     est = int(dur * prog / 1000)
-                    st["times"].setText("%s / %s" % (self._fmt_ms(est), self._fmt_ms(dur)))
+                    tc = st.get("time_cur")
+                    td = st.get("time_dur")
+                    if tc is not None:
+                        tc.setText(self._fmt_ms(est))
+                    if td is not None:
+                        td.setText(self._fmt_ms(dur))
         except Exception:
             pass
 
@@ -2436,6 +2773,17 @@ class BubbleGlassPlugin(BasePlugin):
             st["artist"].setText(artist)
             if st.get("card_artist") is not None:
                 st["card_artist"].setText(artist)
+            album = self._player_album(current) if current is not None else ""
+            if st.get("album") is not None:
+                st["album"].setText(album)
+            try:
+                idx = int(st.get("index", 0))
+            except Exception:
+                idx = 0
+            total = len(st.get("playlist") or [])
+            cp = st.get("card_playing")
+            if cp is not None:
+                cp.setText(("当前播放 %d/%d" % (idx + 1, total)) if total else "当前播放")
             play = st.get("btn_play")
             if play is not None:
                 play.setText("⏸" if playing else "▶")
@@ -2452,7 +2800,16 @@ class BubbleGlassPlugin(BasePlugin):
                     st["seek"].setProgress(int(pos * 1000 / dur))
                 else:
                     st["seek"].setProgress(0)
-                st["times"].setText("%s / %s" % (self._fmt_ms(pos), self._fmt_ms(dur)))
+                cur_s = self._fmt_ms(pos)
+                dur_s = self._fmt_ms(dur)
+                tc = st.get("time_cur")
+                td = st.get("time_dur")
+                if tc is not None:
+                    tc.setText(cur_s)
+                if td is not None:
+                    td.setText(dur_s)
+                if st.get("times") is not None:
+                    st["times"].setText(cur_s)
             # repeat-at-end handling
             if current is not None and playing and dur > 0:
                 mode = int(st.get("repeat", 1))
