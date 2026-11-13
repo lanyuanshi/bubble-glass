@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.12.3"
+__version__ = "1.12.4"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1741,7 +1741,7 @@ class BubbleGlassPlugin(BasePlugin):
         from android.view import Gravity
         from android.widget import LinearLayout, TextView
         from android_utils import OnClickListener
-        from org.telegram.ui import AndroidUtilities
+        from org.telegram.messenger import AndroidUtilities
         root = LinearLayout(ctx)
         root.setOrientation(LinearLayout.VERTICAL)
         root.setGravity(Gravity.CENTER)
@@ -1780,7 +1780,7 @@ class BubbleGlassPlugin(BasePlugin):
         from android.view import Gravity, View
         from android.widget import FrameLayout, LinearLayout, ScrollView, SeekBar, TextView
         from android_utils import OnClickListener, OnSeekBarChangeListener
-        from org.telegram.ui import AndroidUtilities
+        from org.telegram.messenger import AndroidUtilities
 
         st = self._music_state
         st["dialog"] = dialog
@@ -2479,7 +2479,7 @@ class BubbleGlassPlugin(BasePlugin):
     def _lyric_text_view(self, text, color, size):
         from android.view import Gravity
         from android.widget import TextView
-        from org.telegram.ui import AndroidUtilities
+        from org.telegram.messenger import AndroidUtilities
         ctx = self._music_state.get("ctx") or self._music_active_ctx()
         tv = TextView(ctx)
         tv.setText(text)
