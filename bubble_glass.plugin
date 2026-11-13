@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.12.6"
+__version__ = "1.12.7"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -187,6 +187,9 @@ class BubbleGlassPlugin(BasePlugin):
         self._search_bg = None
         self._style_cache = None
         self._stroke_width = None
+        self._glass_ts = {}
+        self._page_cache = {}
+        self._chat_gif_cb = None
         self._reload_cfg()
         self._ar_init()
 
@@ -266,6 +269,8 @@ class BubbleGlassPlugin(BasePlugin):
                 mode = int(cfg[page + "_mode"])
                 self._cfg[page + "_mode"] = mode if 0 <= mode < len(HOME_ITEMS) else HOME_OFF
                 self._cfg[page + "_transparency"] = max(0.0, min(100.0, float(cfg[page + "_transparency"])))
+            self._glass_ts = {}
+            self._page_cache = {}
         except Exception:
             self._cfg = dict(DEFAULTS)
 
@@ -698,6 +703,24 @@ class BubbleGlassPlugin(BasePlugin):
         except Exception:
             self._report("layout_draw")
 
+    def _cached_page_of_parents(self, view):
+        # Page lookups walk the view tree across the bridge; cache the result so
+        # per-frame draw hooks stay O(1).
+        if not self._views:
+            return None
+        try:
+            vid = self._ident(view)
+        except Exception:
+            return self._page_of_parents(view)
+        page = self._page_cache.get(vid)
+        if page is None:
+            page = self._page_of_parents(view)
+            if page is not None:
+                if len(self._page_cache) > 256:
+                    self._page_cache.clear()
+                self._page_cache[vid] = page
+        return page
+
     def _log_info(self, text):
         try:
             self.log(text)
@@ -742,7 +765,11 @@ class BubbleGlassPlugin(BasePlugin):
             page = self._page_of(view)
             if page is None or not self._page_on(page):
                 return
-            self._apply_glass_alpha(page, view, True)
+            now = time.monotonic()
+            vid = self._ident(view)
+            if now - self._glass_ts.get(vid, 0.0) > 0.5:
+                self._glass_ts[vid] = now
+                self._apply_glass_alpha(page, view, True)
             drawable = self._page_drawable_for(page, view)
             if drawable is None:
                 return
@@ -828,7 +855,7 @@ class BubbleGlassPlugin(BasePlugin):
         page = None
         try:
             if self._views and len(param.args) > 1:
-                page = self._page_of_parents(param.args[1].getParent())
+                page = self._cached_page_of_parents(param.args[1].getParent())
         except Exception:
             pass
         self._layer_alpha(param, page, self._card_saves)
@@ -839,7 +866,7 @@ class BubbleGlassPlugin(BasePlugin):
             if not self._views:
                 return
             field = param.thisObject
-            page = self._page_of_parents(field.getParent())
+            page = self._cached_page_of_parents(field.getParent())
             if page is None or page == "home":
                 return
             background = self._search_bg.get(field)
@@ -855,7 +882,7 @@ class BubbleGlassPlugin(BasePlugin):
         page = None
         try:
             if self._views:
-                page = self._page_of_parents(param.thisObject.getParent())
+                page = self._cached_page_of_parents(param.thisObject.getParent())
         except Exception:
             pass
         self._layer_alpha(param, page, self._card_saves)
@@ -1195,7 +1222,9 @@ class BubbleGlassPlugin(BasePlugin):
     def _chat_gif_drawable(self, view):
         if self._chat_gif is not None:
             try:
-                self._chat_gif.setCallback(view)
+                if self._chat_gif_cb is not view:
+                    self._chat_gif.setCallback(view)
+                    self._chat_gif_cb = view
             except Exception:
                 pass
             return self._chat_gif
@@ -1217,6 +1246,7 @@ class BubbleGlassPlugin(BasePlugin):
         try:
             animated.setCallback(view)
             animated.start()
+            self._chat_gif_cb = view
         except Exception:
             pass
         self._chat_gif = animated
