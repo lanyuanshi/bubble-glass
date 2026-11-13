@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.12.1"
+__version__ = "1.12.2"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1748,7 +1748,8 @@ class BubbleGlassPlugin(BasePlugin):
         root = LinearLayout(ctx)
         root.setOrientation(LinearLayout.VERTICAL)
         root.setGravity(Gravity.CENTER)
-        bg = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, [0xFF7A1048, 0xFF6A1B9A])
+        bg = GradientDrawable()
+        bg.setColor(0xFF7A1048)
         root.setBackground(bg)
         root.setPadding(AndroidUtilities.dp(24), AndroidUtilities.dp(24),
                         AndroidUtilities.dp(24), AndroidUtilities.dp(24))
@@ -1795,8 +1796,12 @@ class BubbleGlassPlugin(BasePlugin):
 
         root = LinearLayout(ctx)
         root.setOrientation(LinearLayout.VERTICAL)
-        bg = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM,
-                              [0xFF7A1048, 0xFFAD1457, 0xFF6A1B9A])
+        bg = GradientDrawable()
+        try:
+            bg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM)
+            bg.setColors([0xFF7A1048, 0xFFAD1457, 0xFF6A1B9A])
+        except Exception:
+            bg.setColor(0xFF7A1048)
         root.setBackground(bg)
         root.setPadding(dp(22), dp(30), dp(22), dp(18))
 
