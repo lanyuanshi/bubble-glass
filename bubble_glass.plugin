@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.12.4"
+__version__ = "1.12.5"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1746,20 +1746,20 @@ class BubbleGlassPlugin(BasePlugin):
         root.setOrientation(LinearLayout.VERTICAL)
         root.setGravity(Gravity.CENTER)
         bg = GradientDrawable()
-        bg.setColor(0xFF7A1048)
+        bg.setColor(_signed(0xFF7A1048))
         root.setBackground(bg)
         root.setPadding(AndroidUtilities.dp(24), AndroidUtilities.dp(24),
                         AndroidUtilities.dp(24), AndroidUtilities.dp(24))
         msg = TextView(ctx)
         msg.setText("播放器界面加载失败\n请把 plugin.bubble_glass 日志发给开发者")
         msg.setTextSize(15)
-        msg.setTextColor(0xFFFFFFFF)
+        msg.setTextColor(_signed(0xFFFFFFFF))
         msg.setGravity(Gravity.CENTER)
         root.addView(msg)
         close = TextView(ctx)
         close.setText("关闭")
         close.setTextSize(16)
-        close.setTextColor(0xFFFFFFFF)
+        close.setTextColor(_signed(0xFFFFFFFF))
         close.setGravity(Gravity.CENTER)
         close.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(10),
                          AndroidUtilities.dp(16), AndroidUtilities.dp(10))
@@ -1796,9 +1796,9 @@ class BubbleGlassPlugin(BasePlugin):
         bg = GradientDrawable()
         try:
             bg.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM)
-            bg.setColors([0xFF7A1048, 0xFFAD1457, 0xFF6A1B9A])
+            bg.setColors([_signed(0xFF7A1048), _signed(0xFFAD1457), _signed(0xFF6A1B9A)])
         except Exception:
-            bg.setColor(0xFF7A1048)
+            bg.setColor(_signed(0xFF7A1048))
         root.setBackground(bg)
         root.setPadding(dp(22), dp(30), dp(22), dp(18))
 
@@ -1811,14 +1811,14 @@ class BubbleGlassPlugin(BasePlugin):
         back = TextView(ctx)
         back.setText("✕")
         back.setTextSize(22)
-        back.setTextColor(0xEEFFFFFF)
+        back.setTextColor(_signed(0xEEFFFFFF))
         back.setPadding(dp(8), dp(4), dp(8), dp(4))
         back.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_close_player)))
         top.addView(back)
         title_tv = TextView(ctx)
         title_tv.setText("正在播放")
         title_tv.setTextSize(18)
-        title_tv.setTextColor(0xFFFFFFFF)
+        title_tv.setTextColor(_signed(0xFFFFFFFF))
         title_tv.setTypeface(Typeface.DEFAULT_BOLD)
         tlp = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
         tlp.gravity = Gravity.CENTER
@@ -1848,7 +1848,7 @@ class BubbleGlassPlugin(BasePlugin):
 
         cover_bg = GradientDrawable()
         cover_bg.setCornerRadius(dp(28))
-        cover_bg.setColor(0xFFAB47BC)
+        cover_bg.setColor(_signed(0xFFAB47BC))
         cover_bg.setStroke(dp(2), 0x66FFFFFF)
         cover = TextView(ctx)
         cover.setText("🎵")
@@ -1863,7 +1863,7 @@ class BubbleGlassPlugin(BasePlugin):
         song = TextView(ctx)
         song.setText("未在播放")
         song.setTextSize(22)
-        song.setTextColor(0xFFFFFFFF)
+        song.setTextColor(_signed(0xFFFFFFFF))
         song.setTypeface(Typeface.DEFAULT_BOLD)
         song.setGravity(Gravity.CENTER)
         song.setSingleLine(True)
@@ -1878,7 +1878,7 @@ class BubbleGlassPlugin(BasePlugin):
         artist = TextView(ctx)
         artist.setText("")
         artist.setTextSize(14)
-        artist.setTextColor(0xCCFFFFFF)
+        artist.setTextColor(_signed(0xCCFFFFFF))
         artist.setGravity(Gravity.CENTER)
         artist.setSingleLine(True)
         artist.setEllipsize(TextUtils.TruncateAt.END)
@@ -1893,13 +1893,13 @@ class BubbleGlassPlugin(BasePlugin):
         seek = SeekBar(ctx)
         seek.setMax(1000)
         try:
-            seek.getProgressDrawable().setColorFilter(0xFFFFFFFF, PorterDuff.Mode.SRC_IN)
+            seek.getProgressDrawable().setColorFilter(_signed(0xFFFFFFFF), PorterDuff.Mode.SRC_IN)
         except Exception:
             pass
         try:
             thumb = GradientDrawable()
             thumb.setShape(GradientDrawable.OVAL)
-            thumb.setColor(0xFFFFFFFF)
+            thumb.setColor(_signed(0xFFFFFFFF))
             thumb.setSize(dp(18), dp(18))
             seek.setThumb(thumb)
             seek.setThumbOffset(dp(9))
@@ -1915,7 +1915,7 @@ class BubbleGlassPlugin(BasePlugin):
         times = TextView(ctx)
         times.setText("0:00 / 0:00")
         times.setTextSize(12)
-        times.setTextColor(0xAAFFFFFF)
+        times.setTextColor(_signed(0xAAFFFFFF))
         times.setGravity(Gravity.CENTER)
         ttl = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
                                         LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -1937,7 +1937,7 @@ class BubbleGlassPlugin(BasePlugin):
             b = TextView(ctx)
             b.setText(text)
             b.setTextSize(size)
-            b.setTextColor(0xFFFFFFFF)
+            b.setTextColor(_signed(0xFFFFFFFF))
             b.setGravity(Gravity.CENTER)
             b.setPadding(dp(18), dp(8), dp(18), dp(8))
             b.setOnClickListener(OnClickListener(lambda v, f=fn: self._ui(f)))
@@ -1947,11 +1947,11 @@ class BubbleGlassPlugin(BasePlugin):
 
         play_bg = GradientDrawable()
         play_bg.setShape(GradientDrawable.OVAL)
-        play_bg.setColor(0xFFFFFFFF)
+        play_bg.setColor(_signed(0xFFFFFFFF))
         play = TextView(ctx)
         play.setText("⏸")
         play.setTextSize(34)
-        play.setTextColor(0xFFAD1457)
+        play.setTextColor(_signed(0xFFAD1457))
         play.setGravity(Gravity.CENTER)
         play.setBackground(play_bg)
         pll = LinearLayout.LayoutParams(dp(86), dp(86))
@@ -1977,7 +1977,7 @@ class BubbleGlassPlugin(BasePlugin):
             b = TextView(ctx)
             b.setText(text)
             b.setTextSize(20)
-            b.setTextColor(0xCCFFFFFF)
+            b.setTextColor(_signed(0xCCFFFFFF))
             b.setGravity(Gravity.CENTER)
             b.setPadding(dp(12), dp(6), dp(12), dp(6))
             b.setOnClickListener(OnClickListener(lambda v, f=fn: self._ui(f)))
@@ -1989,7 +1989,7 @@ class BubbleGlassPlugin(BasePlugin):
         speed = TextView(ctx)
         speed.setText("1x")
         speed.setTextSize(15)
-        speed.setTextColor(0xCCFFFFFF)
+        speed.setTextColor(_signed(0xCCFFFFFF))
         speed.setGravity(Gravity.CENTER)
         speed.setPadding(dp(12), dp(6), dp(12), dp(6))
         speed.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_cycle_speed)))
@@ -1999,7 +1999,7 @@ class BubbleGlassPlugin(BasePlugin):
         note = TextView(ctx)
         note.setText("🎵")
         note.setTextSize(20)
-        note.setTextColor(0xFFFFFFFF)
+        note.setTextColor(_signed(0xFFFFFFFF))
         note.setGravity(Gravity.CENTER)
         note.setPadding(dp(12), dp(6), dp(12), dp(6))
         note.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_toggle_lyrics)))
@@ -2009,13 +2009,13 @@ class BubbleGlassPlugin(BasePlugin):
         vol = SeekBar(ctx)
         vol.setMax(100)
         try:
-            vol.getProgressDrawable().setColorFilter(0xFFFFFFFF, PorterDuff.Mode.SRC_IN)
+            vol.getProgressDrawable().setColorFilter(_signed(0xFFFFFFFF), PorterDuff.Mode.SRC_IN)
         except Exception:
             pass
         try:
             thumb = GradientDrawable()
             thumb.setShape(GradientDrawable.OVAL)
-            thumb.setColor(0xFFFFFFFF)
+            thumb.setColor(_signed(0xFFFFFFFF))
             thumb.setSize(dp(14), dp(14))
             vol.setThumb(thumb)
             vol.setThumbOffset(dp(7))
@@ -2049,7 +2049,7 @@ class BubbleGlassPlugin(BasePlugin):
         empty = TextView(ctx)
         empty.setText("暂无歌词")
         empty.setTextSize(14)
-        empty.setTextColor(0xAAFFFFFF)
+        empty.setTextColor(_signed(0xAAFFFFFF))
         empty.setGravity(Gravity.CENTER)
         box.addView(empty)
         st["lyrics"] = empty
@@ -2110,7 +2110,7 @@ class BubbleGlassPlugin(BasePlugin):
             scroll.setVisibility(View.VISIBLE if show else View.GONE)
             note = st.get("btn_note")
             if note is not None:
-                note.setTextColor(0xFFFFFFFF if show else 0xCCFFFFFF)
+                note.setTextColor(_signed(0xFFFFFFFF) if show else _signed(0xCCFFFFFF))
         except Exception:
             self._report("player_lyrics_toggle")
 
@@ -2199,11 +2199,11 @@ class BubbleGlassPlugin(BasePlugin):
                 on = bool(st.get("shuffle")) or self._read_shuffle()
                 st["shuffle"] = on
                 sh.setText("🔀")
-                sh.setTextColor(0xFFFFFFFF if on else 0xAAFFFFFF)
+                sh.setTextColor(_signed(0xFFFFFFFF) if on else _signed(0xAAFFFFFF))
             if rp is not None:
                 mode = int(st.get("repeat", 1))
                 rp.setText("🔂" if mode == 2 else "🔁")
-                rp.setTextColor(0xFFFFFFFF if mode != 0 else 0xAAFFFFFF)
+                rp.setTextColor(_signed(0xFFFFFFFF) if mode != 0 else _signed(0xAAFFFFFF))
         except Exception:
             pass
 
@@ -2468,7 +2468,7 @@ class BubbleGlassPlugin(BasePlugin):
             if box is None:
                 return
             box.removeAllViews()
-            tv = self._lyric_text_view(text, 0xAAFFFFFF, 14)
+            tv = self._lyric_text_view(text, _signed(0xAAFFFFFF), 14)
             tv.setGravity(Gravity.CENTER)
             box.addView(tv)
             st["lyrics"] = tv
@@ -2509,11 +2509,11 @@ class BubbleGlassPlugin(BasePlugin):
             views = []
             if lines:
                 for ms, txt in lines:
-                    tv = self._lyric_text_view(txt, 0xAAFFFFFF, 15)
+                    tv = self._lyric_text_view(txt, _signed(0xAAFFFFFF), 15)
                     box.addView(tv)
                     views.append(tv)
             else:
-                tv = self._lyric_text_view(plain or "暂无歌词", 0xAAFFFFFF, 14)
+                tv = self._lyric_text_view(plain or "暂无歌词", _signed(0xAAFFFFFF), 14)
                 tv.setGravity(Gravity.CENTER)
                 box.addView(tv)
             st["lyrics"] = box.getChildAt(0) if box.getChildCount() > 0 else None
@@ -2540,10 +2540,10 @@ class BubbleGlassPlugin(BasePlugin):
             # recolor
             for i, tv in enumerate(views):
                 if i == idx:
-                    tv.setTextColor(0xFFFFFFFF)
+                    tv.setTextColor(_signed(0xFFFFFFFF))
                     tv.setTextSize(17)
                 else:
-                    tv.setTextColor(0xAAFFFFFF)
+                    tv.setTextColor(_signed(0xAAFFFFFF))
                     tv.setTextSize(15)
             # auto-scroll to current line
             scroll = st.get("scroll")
