@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.14.0"
+__version__ = "1.14.1"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1694,6 +1694,7 @@ class BubbleGlassPlugin(BasePlugin):
                 self._log_info("player_open: already open")
                 return
             from android.app import Dialog
+            from android.view import View
             from android.view import Window
             from android.view import WindowManager
             ctx = None
@@ -1731,10 +1732,31 @@ class BubbleGlassPlugin(BasePlugin):
                                  WindowManager.LayoutParams.MATCH_PARENT)
                 window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
                                 WindowManager.LayoutParams.FLAG_FULLSCREEN)
+                try:
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                    window.setBackgroundDrawableColor(0)
+                except Exception:
+                    pass
             dialog.setCancelable(True)
             from android_utils import _listener as _dlg_listener
             dialog.setOnDismissListener(_dlg_listener("android.content.DialogInterface$OnDismissListener", "onDismiss", lambda d: self._player_on_dismiss(), None))
             dialog.show()
+            try:
+                window = dialog.getWindow()
+                if window is not None:
+                    window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN)
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                    window.setBackgroundDrawableColor(0)
+                    decor = window.getDecorView()
+                    decor.setSystemUiVisibility(
+                        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                        | View.SYSTEM_UI_FLAG_FULLSCREEN)
+            except Exception:
+                pass
             self._music_state["dialog"] = dialog
             self._music_state["view"] = view
             self._player_load_playing()
@@ -1897,7 +1919,11 @@ class BubbleGlassPlugin(BasePlugin):
             content = LinearLayout(ctx)
             content.setOrientation(LinearLayout.VERTICAL)
             top_pad = dp(6)
-            content.setPadding(dp(14), top_pad + dp(2), dp(14), dp(8))
+            try:
+                nav_h = int(AndroidUtilities.navigationBarHeight)
+            except Exception:
+                nav_h = dp(24)
+            content.setPadding(dp(14), top_pad + dp(2), dp(14), nav_h + dp(8))
             root.addView(content, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT))
@@ -1975,9 +2001,9 @@ class BubbleGlassPlugin(BasePlugin):
             # ===== PLAY page =====
             main = LinearLayout(ctx)
             main.setOrientation(LinearLayout.VERTICAL)
-            main.setGravity(Gravity.CENTER_HORIZONTAL | Gravity.CENTER_VERTICAL)
+            main.setGravity(Gravity.CENTER_HORIZONTAL)
 
-            cover_size = dp(196)
+            cover_size = dp(220)
             cover_wrap = FrameLayout(ctx)
             wrap_lp = LinearLayout.LayoutParams(cover_size + dp(24), cover_size + dp(24))
             wrap_lp.setMargins(0, dp(6), 0, dp(4))
