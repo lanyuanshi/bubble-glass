@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.12.0"
+__version__ = "1.12.1"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1684,7 +1684,11 @@ class BubbleGlassPlugin(BasePlugin):
                 dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
             except Exception:
                 pass
-            view = self._player_make_view(dialog, ctx)
+            try:
+                view = self._player_make_view(dialog, ctx)
+            except Exception as ve:
+                self._log_error("player_make_view: %s" % ve)
+                view = self._player_fallback_view(ctx)
             self._log_info("player_open view=%s" % (view is not None))
             dialog.setContentView(view)
             window = dialog.getWindow()
@@ -1708,6 +1712,14 @@ class BubbleGlassPlugin(BasePlugin):
                 self._log_error("player_open: %s\n%s" % (e, traceback.format_exc()))
             except Exception:
                 self._log_error("player_open: %s" % e)
+            try:
+                from android_utils import get_activity
+                from ui.bulletin import BulletinHelper
+                act = get_activity()
+                if act is not None:
+                    BulletinHelper.show_error(act, "播放器打开失败")
+            except Exception:
+                pass
 
     def _player_on_dismiss(self):
         st = self._music_state
@@ -1726,6 +1738,41 @@ class BubbleGlassPlugin(BasePlugin):
         except Exception:
             pass
         self._player_on_dismiss()
+
+    def _player_fallback_view(self, ctx):
+        from android.graphics.drawable import GradientDrawable
+        from android.view import Gravity
+        from android.widget import LinearLayout, TextView
+        from android_utils import OnClickListener
+        from org.telegram.ui import AndroidUtilities
+        root = LinearLayout(ctx)
+        root.setOrientation(LinearLayout.VERTICAL)
+        root.setGravity(Gravity.CENTER)
+        bg = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, [0xFF7A1048, 0xFF6A1B9A])
+        root.setBackground(bg)
+        root.setPadding(AndroidUtilities.dp(24), AndroidUtilities.dp(24),
+                        AndroidUtilities.dp(24), AndroidUtilities.dp(24))
+        msg = TextView(ctx)
+        msg.setText("播放器界面加载失败\n请把 plugin.bubble_glass 日志发给开发者")
+        msg.setTextSize(15)
+        msg.setTextColor(0xFFFFFFFF)
+        msg.setGravity(Gravity.CENTER)
+        root.addView(msg)
+        close = TextView(ctx)
+        close.setText("关闭")
+        close.setTextSize(16)
+        close.setTextColor(0xFFFFFFFF)
+        close.setGravity(Gravity.CENTER)
+        close.setPadding(AndroidUtilities.dp(16), AndroidUtilities.dp(10),
+                         AndroidUtilities.dp(16), AndroidUtilities.dp(10))
+        close.setOnClickListener(OnClickListener(lambda v: self._ui(self._player_close_player)))
+        lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                                       LinearLayout.LayoutParams.WRAP_CONTENT)
+        lp.topMargin = AndroidUtilities.dp(20)
+        lp.gravity = Gravity.CENTER_HORIZONTAL
+        close.setLayoutParams(lp)
+        root.addView(close)
+        return root
 
     def _player_make_view(self, dialog, ctx):
         from android.graphics import PorterDuff, Typeface
