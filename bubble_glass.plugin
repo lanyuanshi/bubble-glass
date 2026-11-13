@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.12.5"
+__version__ = "1.12.6"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1826,7 +1826,7 @@ class BubbleGlassPlugin(BasePlugin):
         top.addView(title_tv)
         pad = TextView(ctx)
         pad.setText(" ")
-        pad.setTextSize(18)
+        pad.setTextSize(22)
         pad.setPadding(dp(8), dp(4), dp(8), dp(4))
         top.addView(pad)
         root.addView(top)
@@ -1900,9 +1900,9 @@ class BubbleGlassPlugin(BasePlugin):
             thumb = GradientDrawable()
             thumb.setShape(GradientDrawable.OVAL)
             thumb.setColor(_signed(0xFFFFFFFF))
-            thumb.setSize(dp(18), dp(18))
+            thumb.setSize(dp(12), dp(12))
             seek.setThumb(thumb)
-            seek.setThumbOffset(dp(9))
+            seek.setThumbOffset(dp(6))
         except Exception:
             pass
         seek.setOnSeekBarChangeListener(OnSeekBarChangeListener(
@@ -2006,33 +2006,16 @@ class BubbleGlassPlugin(BasePlugin):
         st["btn_note"] = note
         util.addView(note)
 
-        vol = SeekBar(ctx)
-        vol.setMax(100)
-        try:
-            vol.getProgressDrawable().setColorFilter(_signed(0xFFFFFFFF), PorterDuff.Mode.SRC_IN)
-        except Exception:
-            pass
-        try:
-            thumb = GradientDrawable()
-            thumb.setShape(GradientDrawable.OVAL)
-            thumb.setColor(_signed(0xFFFFFFFF))
-            thumb.setSize(dp(14), dp(14))
-            vol.setThumb(thumb)
-            vol.setThumbOffset(dp(7))
-        except Exception:
-            pass
-        try:
-            vol.setProgress(self._player_system_volume())
-        except Exception:
-            pass
-        vol.setOnSeekBarChangeListener(OnSeekBarChangeListener(
-            lambda sb, prog, from_user: None,
-            lambda sb: None,
-            lambda sb: self._player_set_system_volume(sb.getProgress())))
+        vol_icon = TextView(ctx)
+        vol_icon.setText("🔊")
+        vol_icon.setTextSize(20)
+        vol_icon.setTextColor(_signed(0xCCFFFFFF))
+        vol_icon.setGravity(Gravity.CENTER)
+        vol_icon.setPadding(dp(12), dp(6), dp(12), dp(6))
         vll = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0)
-        vll.setMargins(dp(8), 0, 0, 0)
-        vol.setLayoutParams(vll)
-        util.addView(vol)
+        vll.gravity = Gravity.END | Gravity.CENTER_VERTICAL
+        vol_icon.setLayoutParams(vll)
+        util.addView(vol_icon)
         root.addView(util)
 
         # ---- lyrics panel (hidden by default) ----
