@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.12.2"
+__version__ = "1.12.3"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1713,11 +1713,8 @@ class BubbleGlassPlugin(BasePlugin):
             except Exception:
                 self._log_error("player_open: %s" % e)
             try:
-                from android_utils import get_activity
                 from ui.bulletin import BulletinHelper
-                act = get_activity()
-                if act is not None:
-                    BulletinHelper.show_error(act, "播放器打开失败")
+                BulletinHelper.show_error("播放器打开失败: %s" % e)
             except Exception:
                 pass
 
