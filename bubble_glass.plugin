@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.14.1"
+__version__ = "1.14.2"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1693,10 +1693,9 @@ class BubbleGlassPlugin(BasePlugin):
             if self._music_state.get("dialog") is not None:
                 self._log_info("player_open: already open")
                 return
-            from android.app import Dialog
+            from android import R
             from android.view import View
-            from android.view import Window
-            from android.view import WindowManager
+            from android.widget import FrameLayout
             ctx = None
             chat = self._music_active_chat()
             if chat is not None:
@@ -1714,54 +1713,53 @@ class BubbleGlassPlugin(BasePlugin):
                 self._log_error("player_open: no context")
                 return
             self._log_info("player_open ctx=%s" % type(ctx).__name__)
-            dialog = Dialog(ctx)
             try:
-                dialog.requestWindowFeature(Window.FEATURE_NO_TITLE)
-            except Exception:
-                pass
-            try:
-                view = self._player_make_view(dialog, ctx)
+                view = self._player_make_view(None, ctx)
             except Exception as ve:
                 self._log_error("player_make_view: %s" % ve)
                 view = self._player_fallback_view(ctx)
             self._log_info("player_open view=%s" % (view is not None))
-            dialog.setContentView(view)
-            window = dialog.getWindow()
-            if window is not None:
-                window.setLayout(WindowManager.LayoutParams.MATCH_PARENT,
-                                 WindowManager.LayoutParams.MATCH_PARENT)
-                window.setFlags(WindowManager.LayoutParams.FLAG_FULLSCREEN,
-                                WindowManager.LayoutParams.FLAG_FULLSCREEN)
-                try:
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                    window.setBackgroundDrawableColor(0)
-                except Exception:
-                    pass
-            dialog.setCancelable(True)
-            from android_utils import _listener as _dlg_listener
-            dialog.setOnDismissListener(_dlg_listener("android.content.DialogInterface$OnDismissListener", "onDismiss", lambda d: self._player_on_dismiss(), None))
-            dialog.show()
+            content = None
             try:
-                window = dialog.getWindow()
-                if window is not None:
-                    window.addFlags(WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN)
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-                    window.setBackgroundDrawableColor(0)
-                    decor = window.getDecorView()
-                    decor.setSystemUiVisibility(
-                        View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-                        | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                        | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                        | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
-                        | View.SYSTEM_UI_FLAG_FULLSCREEN)
+                content = ctx.findViewById(R.id.content)
+            except Exception:
+                content = None
+            if content is None:
+                try:
+                    content = ctx.getWindow().getDecorView()
+                except Exception:
+                    content = None
+            if content is None:
+                self._log_error("player_open: no content view")
+                return
+            overlay = FrameLayout(ctx)
+            overlay.setBackgroundColor(_signed(0xFF0B1026))
+            overlay.addView(view, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT))
+            content.addView(overlay, FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT))
+            prev_vis = 0
+            try:
+                decor = ctx.getWindow().getDecorView()
+                prev_vis = decor.getSystemUiVisibility()
+                decor.setSystemUiVisibility(
+                    View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+                    | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                    | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                    | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                    | View.SYSTEM_UI_FLAG_FULLSCREEN)
             except Exception:
                 pass
-            self._music_state["dialog"] = dialog
+            self._music_state["overlay"] = overlay
+            self._music_state["prev_ui"] = prev_vis
+            self._music_state["dialog"] = overlay
             self._music_state["view"] = view
             self._player_load_playing()
             self._player_start_loop()
-            self._log_info("player opened")
+            self._log_info("player opened overlay")
         except Exception as e:
             try:
                 import traceback
@@ -1778,6 +1776,7 @@ class BubbleGlassPlugin(BasePlugin):
         st = self._music_state
         st["dialog"] = None
         st["view"] = None
+        st["overlay"] = None
         h = st.get("handler")
         r = st.get("runnable")
         if h is not None and r is not None:
@@ -1785,9 +1784,22 @@ class BubbleGlassPlugin(BasePlugin):
 
     def _player_close_player(self):
         try:
-            dialog = self._music_state.get("dialog")
-            if dialog is not None:
-                dialog.dismiss()
+            st = self._music_state
+            overlay = st.get("overlay")
+            if overlay is not None:
+                try:
+                    parent = overlay.getParent()
+                    if parent is not None:
+                        parent.removeView(overlay)
+                except Exception:
+                    pass
+            try:
+                ctx = st.get("ctx")
+                if ctx is not None:
+                    decor = ctx.getWindow().getDecorView()
+                    decor.setSystemUiVisibility(int(st.get("prev_ui", 0)))
+            except Exception:
+                pass
         except Exception:
             pass
         self._player_on_dismiss()
@@ -1909,7 +1921,7 @@ class BubbleGlassPlugin(BasePlugin):
 
             shade = GradientDrawable()
             shade.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM)
-            shade.setColors([_signed(0x00000000), _signed(0x550B1026), _signed(0xDD0B1026)])
+            shade.setColors([_signed(0x440B1026), _signed(0x990B1026), _signed(0xDD0B1026)])
             shade_view = View(ctx)
             shade_view.setBackground(shade)
             root.addView(shade_view, FrameLayout.LayoutParams(
