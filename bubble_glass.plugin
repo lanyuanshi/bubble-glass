@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.14.12"
+__version__ = "1.14.13"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1964,7 +1964,7 @@ class BubbleGlassPlugin(BasePlugin):
 
             # ---- root + background ----
             root = FrameLayout(ctx)
-            root.setBackgroundColor(_signed(0xFF0B1026))
+            root.setBackgroundColor(_signed(0xFF2A3D66))
 
             bg_bmp = decode_asset(_ASSET_BG)
             if bg_bmp is not None:
@@ -1977,7 +1977,7 @@ class BubbleGlassPlugin(BasePlugin):
 
             shade = GradientDrawable()
             shade.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM)
-            shade.setColors([_signed(0x550B1026), _signed(0xBB0B1026), _signed(0xEE0B1026)])
+            shade.setColors([_signed(0x140B1026), _signed(0x260B1026), _signed(0x4D0B1026)])
             shade_view = View(ctx)
             shade_view.setBackground(shade)
             root.addView(shade_view, FrameLayout.LayoutParams(
