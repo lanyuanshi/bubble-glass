@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.14.6"
+__version__ = "1.14.7"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -2060,30 +2060,47 @@ class BubbleGlassPlugin(BasePlugin):
             content.addView(pages, pages_lp)
             st["pages"] = {}
 
-            # ===== PLAY page =====
-            main = LinearLayout(ctx)
-            main.setOrientation(LinearLayout.VERTICAL)
-            main.setGravity(Gravity.CENTER_HORIZONTAL)
+            # ===== PLAY page (proportional layout) =====
+            main = FrameLayout(ctx)
 
-            cover_size = dp(220)
+            try:
+                dsize = AndroidUtilities.displaySize
+                disp_w = int(dsize.x)
+                disp_h = int(dsize.y)
+            except Exception:
+                dm = ctx.getResources().getDisplayMetrics()
+                disp_w = int(dm.widthPixels)
+                disp_h = int(dm.heightPixels)
+
+            # main (pages area) height estimate as fraction of display height
+            M = int(disp_h * 0.72)
+            if M < 1:
+                M = disp_h
+
+            def place(view, top_px, width_px=None, height_px=None):
+                if width_px is None:
+                    lp = FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT,
+                                                  FrameLayout.LayoutParams.WRAP_CONTENT)
+                else:
+                    lp = FrameLayout.LayoutParams(width_px,
+                                                  height_px if height_px is not None else FrameLayout.LayoutParams.WRAP_CONTENT)
+                lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL
+                lp.topMargin = int(top_px)
+                main.addView(view, lp)
+
+            cover_px = int(disp_w * 0.60)
             cover_wrap = FrameLayout(ctx)
-            wrap_lp = LinearLayout.LayoutParams(cover_size + dp(24), cover_size + dp(24))
-            wrap_lp.setMargins(0, dp(0), 0, dp(0))
-            cover_wrap.setLayoutParams(wrap_lp)
-
             glow = View(ctx)
             glow.setBackground(oval_bg(0x554FC3F7))
-            cover_wrap.addView(glow, FrameLayout.LayoutParams(
-                cover_size + dp(20), cover_size + dp(20), Gravity.CENTER))
+            cover_wrap.addView(glow, FrameLayout.LayoutParams(cover_px - dp(6), cover_px - dp(6), Gravity.CENTER))
             ring = View(ctx)
             ring.setBackground(oval_bg(0x00000000, stroke_w=3, stroke_color=0xFF64B5F6))
-            cover_wrap.addView(ring, FrameLayout.LayoutParams(
-                cover_size + dp(8), cover_size + dp(8), Gravity.CENTER))
-
+            cover_wrap.addView(ring, FrameLayout.LayoutParams(cover_px - dp(14), cover_px - dp(14), Gravity.CENTER))
+            inner = cover_px - dp(16)
             cover_bmp = decode_asset(_ASSET_COVER)
             if cover_bmp is not None:
                 try:
-                    cover_bmp = circle_crop(cover_bmp, cover_size)
+                    cover_bmp = circle_crop(cover_bmp, inner)
                 except Exception:
                     pass
             cover = ImageView(ctx)
@@ -2092,19 +2109,13 @@ class BubbleGlassPlugin(BasePlugin):
             else:
                 cover.setBackground(oval_bg(0xFF7C4DFF))
             cover.setScaleType(ImageView.ScaleType.CENTER_CROP)
-            cover_wrap.addView(cover, FrameLayout.LayoutParams(
-                cover_size, cover_size, Gravity.CENTER))
-            main.addView(cover_wrap)
+            cover_wrap.addView(cover, FrameLayout.LayoutParams(inner, inner, Gravity.CENTER))
+            place(cover_wrap, int(0.012 * M), cover_px, cover_px)
             st["cover"] = cover
 
             title_row = LinearLayout(ctx)
             title_row.setOrientation(LinearLayout.HORIZONTAL)
             title_row.setGravity(Gravity.CENTER_VERTICAL)
-            tr_lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT)
-            tr_lp.setMargins(0, dp(6), 0, 0)
-            main.addView(title_row, tr_lp)
             song = tv("未在播放", 20, 0xFFFFFFFF, bold=True)
             song.setMaxLines(1)
             song.setEllipsize(TextUtils.TruncateAt.END)
@@ -2128,15 +2139,11 @@ class BubbleGlassPlugin(BasePlugin):
             sq_lp.setMargins(dp(6), 0, 0, 0)
             sq_lp.gravity = Gravity.CENTER_VERTICAL
             title_row.addView(sq, sq_lp)
+            place(title_row, int(0.405 * M))
 
             artist_row = LinearLayout(ctx)
             artist_row.setOrientation(LinearLayout.HORIZONTAL)
             artist_row.setGravity(Gravity.CENTER_VERTICAL)
-            ar_lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT)
-            ar_lp.setMargins(0, dp(2), 0, 0)
-            main.addView(artist_row, ar_lp)
             artist = tv("", 14, 0xCCFFFFFF)
             artist.setMaxLines(1)
             artist.setEllipsize(TextUtils.TruncateAt.END)
@@ -2144,15 +2151,11 @@ class BubbleGlassPlugin(BasePlugin):
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT))
             st["artist"] = artist
+            place(artist_row, int(0.436 * M))
 
             album_row = LinearLayout(ctx)
             album_row.setOrientation(LinearLayout.HORIZONTAL)
             album_row.setGravity(Gravity.CENTER_VERTICAL)
-            alb_lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT)
-            alb_lp.setMargins(0, dp(2), 0, 0)
-            main.addView(album_row, alb_lp)
             album = tv("未知专辑", 13, 0x99FFFFFF)
             album.setMaxLines(1)
             album.setEllipsize(TextUtils.TruncateAt.END)
@@ -2160,6 +2163,7 @@ class BubbleGlassPlugin(BasePlugin):
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT))
             st["album"] = album
+            place(album_row, int(0.464 * M))
 
             seek = SeekBar(ctx)
             seek.setMax(1000)
@@ -2173,21 +2177,13 @@ class BubbleGlassPlugin(BasePlugin):
                 lambda sb, prog, from_user: self._player_on_seek_change(prog, from_user),
                 lambda sb, prog: None,
                 lambda sb: self._player_on_seek_stop(sb.getProgress())))
-            seek_lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT)
-            seek_lp.setMargins(dp(6), dp(8), dp(6), 0)
-            main.addView(seek, seek_lp)
+            seek_w = int(disp_w * 0.86)
+            place(seek, int(0.508 * M), seek_w, dp(30))
             st["seek"] = seek
 
             times_row = LinearLayout(ctx)
             times_row.setOrientation(LinearLayout.HORIZONTAL)
             times_row.setGravity(Gravity.CENTER_VERTICAL)
-            tm_lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT)
-            tm_lp.setMargins(dp(6), dp(1), dp(6), 0)
-            main.addView(times_row, tm_lp)
             time_cur = tv("0:00", 12, 0xAAFFFFFF)
             time_cur.setGravity(Gravity.LEFT)
             times_row.addView(time_cur, LinearLayout.LayoutParams(
@@ -2203,15 +2199,13 @@ class BubbleGlassPlugin(BasePlugin):
             st["time_cur"] = time_cur
             st["time_dur"] = time_dur
             st["times"] = time_cur
+            place(times_row, int(0.540 * M), seek_w)
 
             ctrl = LinearLayout(ctx)
             ctrl.setOrientation(LinearLayout.HORIZONTAL)
             ctrl.setGravity(Gravity.CENTER)
-            ctrl_lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT)
-            ctrl_lp.setMargins(0, dp(4), 0, 0)
-            main.addView(ctrl, ctrl_lp)
+            ctrl_w = int(disp_w * 0.86)
+            place(ctrl, int(0.566 * M), ctrl_w)
 
             btn_repeat = img_btn("repeat", 24, ml=2, mr=2)
             btn_repeat.setOnClickListener(OnClickListener(lambda v: self._player_cycle_repeat()))
@@ -2228,8 +2222,7 @@ class BubbleGlassPlugin(BasePlugin):
             play_wrap.setLayoutParams(LinearLayout.LayoutParams(pw_wrap, pw_wrap))
             pglow = View(ctx)
             pglow.setBackground(oval_bg(0x554FC3F7))
-            play_wrap.addView(pglow, FrameLayout.LayoutParams(
-                pw_wrap, pw_wrap, Gravity.CENTER))
+            play_wrap.addView(pglow, FrameLayout.LayoutParams(pw_wrap, pw_wrap, Gravity.CENTER))
             pbg = View(ctx)
             pbg.setBackground(oval_bg(0xFF5B8CFF, stroke_w=3, stroke_color=0xFF9CC2FF))
             play_wrap.addView(pbg, FrameLayout.LayoutParams(pw_circle, pw_circle, Gravity.CENTER))
