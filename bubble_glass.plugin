@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.14.3"
+__version__ = "1.14.4"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1986,7 +1986,7 @@ class BubbleGlassPlugin(BasePlugin):
 
             content = LinearLayout(ctx)
             content.setOrientation(LinearLayout.VERTICAL)
-            top_pad = dp(6)
+            top_pad = dp(2)
             try:
                 nav_h = int(AndroidUtilities.navigationBarHeight)
             except Exception:
@@ -2065,10 +2065,10 @@ class BubbleGlassPlugin(BasePlugin):
             main.setOrientation(LinearLayout.VERTICAL)
             main.setGravity(Gravity.CENTER_HORIZONTAL)
 
-            cover_size = dp(220)
+            cover_size = dp(240)
             cover_wrap = FrameLayout(ctx)
             wrap_lp = LinearLayout.LayoutParams(cover_size + dp(24), cover_size + dp(24))
-            wrap_lp.setMargins(0, dp(6), 0, dp(4))
+            wrap_lp.setMargins(0, dp(0), 0, dp(2))
             cover_wrap.setLayoutParams(wrap_lp)
 
             glow = View(ctx)
@@ -2103,7 +2103,7 @@ class BubbleGlassPlugin(BasePlugin):
             tr_lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
-            tr_lp.setMargins(0, dp(12), 0, 0)
+            tr_lp.setMargins(0, dp(8), 0, 0)
             main.addView(title_row, tr_lp)
             song = tv("未在播放", 20, 0xFFFFFFFF, bold=True)
             song.setMaxLines(1)
@@ -2135,7 +2135,7 @@ class BubbleGlassPlugin(BasePlugin):
             ar_lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
-            ar_lp.setMargins(0, dp(4), 0, 0)
+            ar_lp.setMargins(0, dp(3), 0, 0)
             main.addView(artist_row, ar_lp)
             artist = tv("", 14, 0xCCFFFFFF)
             artist.setMaxLines(1)
@@ -2176,7 +2176,7 @@ class BubbleGlassPlugin(BasePlugin):
             seek_lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
-            seek_lp.setMargins(dp(6), dp(16), dp(6), 0)
+            seek_lp.setMargins(dp(6), dp(12), dp(6), 0)
             main.addView(seek, seek_lp)
             st["seek"] = seek
 
@@ -2210,7 +2210,7 @@ class BubbleGlassPlugin(BasePlugin):
             ctrl_lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
-            ctrl_lp.setMargins(0, dp(8), 0, 0)
+            ctrl_lp.setMargins(0, dp(6), 0, 0)
             main.addView(ctrl, ctrl_lp)
 
             btn_repeat = img_btn("repeat", 24, ml=2, mr=2)
@@ -2831,19 +2831,28 @@ class BubbleGlassPlugin(BasePlugin):
             current = mc.getPlayingMessageObject()
             playing = current is not None and not mc.isMessagePaused()
             self._player_set_spin(st, playing)
-            title = self._music_title(current) if current is not None else "未在播放"
+            info_msg = current
+            if info_msg is None:
+                _msgs = st.get("playlist") or []
+                try:
+                    _idx = int(st.get("index", 0))
+                except Exception:
+                    _idx = 0
+                if 0 <= _idx < len(_msgs):
+                    info_msg = _msgs[_idx]
+            title = self._music_title(info_msg) if info_msg is not None else "未在播放"
             st["song"].setText(title)
             if st.get("card_song") is not None:
                 st["card_song"].setText(title)
             artist = ""
             try:
-                artist = current.getMusicPerformer() or ""
+                artist = info_msg.getMusicPerformer() or ""
             except Exception:
                 pass
             st["artist"].setText(artist)
             if st.get("card_artist") is not None:
                 st["card_artist"].setText(artist)
-            album = self._player_album(current) if current is not None else "未知专辑"
+            album = self._player_album(info_msg) if info_msg is not None else "未知专辑"
             if st.get("album") is not None:
                 st["album"].setText(album)
             try:
