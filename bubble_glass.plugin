@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.14.14"
+__version__ = "1.14.15"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -2065,27 +2065,38 @@ class BubbleGlassPlugin(BasePlugin):
             st["pages"] = {}
 
             # ===== PLAY page =====
-            main = LinearLayout(ctx)
-            main.setOrientation(LinearLayout.VERTICAL)
-            main.setGravity(Gravity.CENTER_HORIZONTAL)
-
+            # ===== PLAY page =====
+            main = FrameLayout(ctx)
             try:
                 dsize = AndroidUtilities.displaySize
                 disp_w = int(dsize.x)
+                disp_h = int(dsize.y)
             except Exception:
                 try:
-                    disp_w = int(ctx.getResources().getDisplayMetrics().widthPixels)
+                    dm = ctx.getResources().getDisplayMetrics()
+                    disp_w = int(dm.widthPixels)
+                    disp_h = int(dm.heightPixels)
                 except Exception:
                     disp_w = dp(360)
-            cover_px = int(disp_w * 0.68)
+                    disp_h = dp(640)
+            main_h = max(int(disp_h * 0.74), dp(300))
+
+            def place_frac(view, top_frac, width=None, height=None, center=True):
+                w = width if width is not None else FrameLayout.LayoutParams.WRAP_CONTENT
+                h = height if height is not None else FrameLayout.LayoutParams.WRAP_CONTENT
+                lp = FrameLayout.LayoutParams(w, h)
+                if center:
+                    lp.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL
+                else:
+                    lp.gravity = Gravity.TOP | Gravity.LEFT
+                lp.topMargin = int(main_h * top_frac)
+                main.addView(view, lp)
+                return lp
+
+            cover_px = int(disp_w * 0.60)
             cover_wrap = FrameLayout(ctx)
             cw = cover_px + dp(24)
-            wrap_lp = LinearLayout.LayoutParams(cw, cw)
-            wrap_lp.setMargins(0, dp(2), 0, 0)
-            top_spacer = View(ctx)
-            main.addView(top_spacer, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0))
-            cover_wrap.setLayoutParams(wrap_lp)
+            place_frac(cover_wrap, 0.02, width=cw, height=cw, center=True)
 
             glow = View(ctx)
             glow.setBackground(oval_bg(0x554FC3F7))
@@ -2107,22 +2118,15 @@ class BubbleGlassPlugin(BasePlugin):
                 cover.setBackground(oval_bg(0xFF7C4DFF))
             cover.setScaleType(ImageView.ScaleType.CENTER_CROP)
             cover_wrap.addView(cover, FrameLayout.LayoutParams(inner, inner, Gravity.CENTER))
-            main.addView(cover_wrap)
             st["cover"] = cover
 
             title_row = LinearLayout(ctx)
             title_row.setOrientation(LinearLayout.HORIZONTAL)
-            title_row.setGravity(Gravity.CENTER_VERTICAL)
-            tr_lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-                                              LinearLayout.LayoutParams.WRAP_CONTENT)
-            tr_lp.setMargins(0, dp(16), 0, 0)
-            main.addView(title_row, tr_lp)
+            title_row.setGravity(Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL)
             song = tv("未在播放", 20, 0xFFFFFFFF, bold=True)
             song.setMaxLines(1)
             song.setEllipsize(TextUtils.TruncateAt.END)
-            title_row.addView(song, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT))
+            title_row.addView(song)
             st["song"] = song
             sq = TextView(ctx)
             sq.setText("SQ")
@@ -2139,36 +2143,27 @@ class BubbleGlassPlugin(BasePlugin):
             sq_lp.setMargins(dp(6), 0, 0, 0)
             sq_lp.gravity = Gravity.CENTER_VERTICAL
             title_row.addView(sq, sq_lp)
+            place_frac(title_row, 0.44, width=FrameLayout.LayoutParams.MATCH_PARENT, center=True)
 
             artist_row = LinearLayout(ctx)
             artist_row.setOrientation(LinearLayout.HORIZONTAL)
-            artist_row.setGravity(Gravity.CENTER_VERTICAL)
-            ar_lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-                                              LinearLayout.LayoutParams.WRAP_CONTENT)
-            ar_lp.setMargins(0, dp(5), 0, 0)
-            main.addView(artist_row, ar_lp)
+            artist_row.setGravity(Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL)
             artist = tv("", 14, 0xCCFFFFFF)
             artist.setMaxLines(1)
             artist.setEllipsize(TextUtils.TruncateAt.END)
-            artist_row.addView(artist, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT))
+            artist_row.addView(artist)
             st["artist"] = artist
+            place_frac(artist_row, 0.485, width=FrameLayout.LayoutParams.MATCH_PARENT, center=True)
 
             album_row = LinearLayout(ctx)
             album_row.setOrientation(LinearLayout.HORIZONTAL)
-            album_row.setGravity(Gravity.CENTER_VERTICAL)
-            alb_lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
-                                               LinearLayout.LayoutParams.WRAP_CONTENT)
-            alb_lp.setMargins(0, dp(4), 0, 0)
-            main.addView(album_row, alb_lp)
+            album_row.setGravity(Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL)
             album = tv("未知专辑", 13, 0x99FFFFFF)
             album.setMaxLines(1)
             album.setEllipsize(TextUtils.TruncateAt.END)
-            album_row.addView(album, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT))
+            album_row.addView(album)
             st["album"] = album
+            place_frac(album_row, 0.525, width=FrameLayout.LayoutParams.MATCH_PARENT, center=True)
 
             seek = SeekBar(ctx)
             seek.setMax(1000)
@@ -2182,42 +2177,28 @@ class BubbleGlassPlugin(BasePlugin):
                 lambda sb, prog, from_user: self._player_on_seek_change(prog, from_user),
                 lambda sb, prog: None,
                 lambda sb: self._player_on_seek_stop(sb.getProgress())))
-            seek_lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                                                LinearLayout.LayoutParams.WRAP_CONTENT)
-            seek_lp.setMargins(dp(6), dp(18), dp(6), 0)
-            main.addView(seek, seek_lp)
             st["seek"] = seek
+            place_frac(seek, 0.60, width=FrameLayout.LayoutParams.MATCH_PARENT, center=True)
 
             times_row = LinearLayout(ctx)
             times_row.setOrientation(LinearLayout.HORIZONTAL)
             times_row.setGravity(Gravity.CENTER_VERTICAL)
-            tm_lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                                              LinearLayout.LayoutParams.WRAP_CONTENT)
-            tm_lp.setMargins(dp(6), dp(4), dp(6), 0)
-            main.addView(times_row, tm_lp)
             time_cur = tv("0:00", 12, 0xAAFFFFFF)
             time_cur.setGravity(Gravity.LEFT)
-            times_row.addView(time_cur, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT))
+            times_row.addView(time_cur)
             spacer = View(ctx)
             times_row.addView(spacer, LinearLayout.LayoutParams(0, 1, 1.0))
             time_dur = tv("0:00", 12, 0xAAFFFFFF)
             time_dur.setGravity(Gravity.RIGHT)
-            times_row.addView(time_dur, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT))
+            times_row.addView(time_dur)
             st["time_cur"] = time_cur
             st["time_dur"] = time_dur
             st["times"] = time_cur
+            place_frac(times_row, 0.645, width=FrameLayout.LayoutParams.MATCH_PARENT, center=True)
 
             ctrl = LinearLayout(ctx)
             ctrl.setOrientation(LinearLayout.HORIZONTAL)
             ctrl.setGravity(Gravity.CENTER)
-            ctrl_lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
-                                                LinearLayout.LayoutParams.WRAP_CONTENT)
-            ctrl_lp.setMargins(0, dp(14), 0, 0)
-            main.addView(ctrl, ctrl_lp)
 
             btn_repeat = img_btn("repeat", 24, ml=2, mr=2)
             btn_repeat.setOnClickListener(OnClickListener(lambda v: self._player_cycle_repeat()))
@@ -2262,11 +2243,7 @@ class BubbleGlassPlugin(BasePlugin):
             ctrl.addView(btn_note)
             st["btn_note"] = btn_note
 
-            # bottom flexible spacer keeps content top-anchored, empty space above card
-            bot = View(ctx)
-            bot_lp = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT, 0, 1.0)
-            main.addView(bot, bot_lp)
+            place_frac(ctrl, 0.73, width=FrameLayout.LayoutParams.MATCH_PARENT, center=True)
 
             pages.addView(main, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
