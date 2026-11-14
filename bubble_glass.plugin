@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.14.4"
+__version__ = "1.14.6"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -2065,10 +2065,10 @@ class BubbleGlassPlugin(BasePlugin):
             main.setOrientation(LinearLayout.VERTICAL)
             main.setGravity(Gravity.CENTER_HORIZONTAL)
 
-            cover_size = dp(240)
+            cover_size = dp(220)
             cover_wrap = FrameLayout(ctx)
             wrap_lp = LinearLayout.LayoutParams(cover_size + dp(24), cover_size + dp(24))
-            wrap_lp.setMargins(0, dp(0), 0, dp(2))
+            wrap_lp.setMargins(0, dp(0), 0, dp(0))
             cover_wrap.setLayoutParams(wrap_lp)
 
             glow = View(ctx)
@@ -2103,7 +2103,7 @@ class BubbleGlassPlugin(BasePlugin):
             tr_lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
-            tr_lp.setMargins(0, dp(8), 0, 0)
+            tr_lp.setMargins(0, dp(6), 0, 0)
             main.addView(title_row, tr_lp)
             song = tv("未在播放", 20, 0xFFFFFFFF, bold=True)
             song.setMaxLines(1)
@@ -2135,7 +2135,7 @@ class BubbleGlassPlugin(BasePlugin):
             ar_lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
-            ar_lp.setMargins(0, dp(3), 0, 0)
+            ar_lp.setMargins(0, dp(2), 0, 0)
             main.addView(artist_row, ar_lp)
             artist = tv("", 14, 0xCCFFFFFF)
             artist.setMaxLines(1)
@@ -2176,7 +2176,7 @@ class BubbleGlassPlugin(BasePlugin):
             seek_lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
-            seek_lp.setMargins(dp(6), dp(12), dp(6), 0)
+            seek_lp.setMargins(dp(6), dp(8), dp(6), 0)
             main.addView(seek, seek_lp)
             st["seek"] = seek
 
@@ -2186,7 +2186,7 @@ class BubbleGlassPlugin(BasePlugin):
             tm_lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
-            tm_lp.setMargins(dp(6), dp(2), dp(6), 0)
+            tm_lp.setMargins(dp(6), dp(1), dp(6), 0)
             main.addView(times_row, tm_lp)
             time_cur = tv("0:00", 12, 0xAAFFFFFF)
             time_cur.setGravity(Gravity.LEFT)
@@ -2210,7 +2210,7 @@ class BubbleGlassPlugin(BasePlugin):
             ctrl_lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
-            ctrl_lp.setMargins(0, dp(6), 0, 0)
+            ctrl_lp.setMargins(0, dp(4), 0, 0)
             main.addView(ctrl, ctrl_lp)
 
             btn_repeat = img_btn("repeat", 24, ml=2, mr=2)
@@ -2223,8 +2223,8 @@ class BubbleGlassPlugin(BasePlugin):
             ctrl.addView(btn_prev)
 
             play_wrap = FrameLayout(ctx)
-            pw_wrap = dp(94)
-            pw_circle = dp(78)
+            pw_wrap = dp(56)
+            pw_circle = dp(44)
             play_wrap.setLayoutParams(LinearLayout.LayoutParams(pw_wrap, pw_wrap))
             pglow = View(ctx)
             pglow.setBackground(oval_bg(0x554FC3F7))
@@ -2240,7 +2240,7 @@ class BubbleGlassPlugin(BasePlugin):
             if pbmp is not None:
                 btn_play.setImageBitmap(pbmp)
             btn_play.setScaleType(ImageView.ScaleType.FIT_CENTER)
-            btn_play.setPadding(dp(16), dp(16), dp(16), dp(16))
+            btn_play.setPadding(dp(5), dp(5), dp(5), dp(5))
             btn_play.setOnClickListener(OnClickListener(lambda v: self._player_toggle()))
             play_wrap.addView(btn_play, FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
