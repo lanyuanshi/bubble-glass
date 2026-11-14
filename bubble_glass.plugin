@@ -14,7 +14,7 @@ __id__ = "bubble_glass"
 __name__ = "Frost Evening Verse（霜晚辞）"
 __description__ = "玻璃质感气泡与页面壁纸、全屏播放器、防撤回、内容保护截图下载"
 __author__ = "蓝鸢"
-__version__ = "1.14.15"
+__version__ = "1.14.17"
 __icon__ = "dongtsi/0"
 __category__ = "appearance"
 __permissions__ = ["hooks", "intents", "files"]
@@ -1977,7 +1977,7 @@ class BubbleGlassPlugin(BasePlugin):
 
             shade = GradientDrawable()
             shade.setOrientation(GradientDrawable.Orientation.TOP_BOTTOM)
-            shade.setColors([_signed(0x140B1026), _signed(0x260B1026), _signed(0x4D0B1026)])
+            shade.setColors([_signed(0x59788CDC), _signed(0x8C5A64B4)])
             shade_view = View(ctx)
             shade_view.setBackground(shade)
             root.addView(shade_view, FrameLayout.LayoutParams(
@@ -2080,6 +2080,13 @@ class BubbleGlassPlugin(BasePlugin):
                     disp_w = dp(360)
                     disp_h = dp(640)
             main_h = max(int(disp_h * 0.74), dp(300))
+            try:
+                _dm = ctx.getResources().getDisplayMetrics()
+                width_dp = _dm.widthPixels / _dm.density
+            except Exception:
+                width_dp = 360.0
+            def fs(ratio):
+                return ratio * width_dp
 
             def place_frac(view, top_frac, width=None, height=None, center=True):
                 w = width if width is not None else FrameLayout.LayoutParams.WRAP_CONTENT
@@ -2093,16 +2100,16 @@ class BubbleGlassPlugin(BasePlugin):
                 main.addView(view, lp)
                 return lp
 
-            cover_px = int(disp_w * 0.60)
+            cover_px = int(disp_w * 0.547)
             cover_wrap = FrameLayout(ctx)
             cw = cover_px + dp(24)
             place_frac(cover_wrap, 0.02, width=cw, height=cw, center=True)
 
             glow = View(ctx)
-            glow.setBackground(oval_bg(0x554FC3F7))
+            glow.setBackground(oval_bg(0x738CAAFF))
             cover_wrap.addView(glow, FrameLayout.LayoutParams(cw - dp(6), cw - dp(6), Gravity.CENTER))
             ring = View(ctx)
-            ring.setBackground(oval_bg(0x00000000, stroke_w=3, stroke_color=0xFF64B5F6))
+            ring.setBackground(oval_bg(0x00000000, stroke_w=3, stroke_color=0xFF8CAAFF))
             cover_wrap.addView(ring, FrameLayout.LayoutParams(cw - dp(14), cw - dp(14), Gravity.CENTER))
             inner = cover_px - dp(12)
             cover_bmp = decode_asset(_ASSET_COVER)
@@ -2115,7 +2122,7 @@ class BubbleGlassPlugin(BasePlugin):
             if cover_bmp is not None:
                 cover.setImageBitmap(cover_bmp)
             else:
-                cover.setBackground(oval_bg(0xFF7C4DFF))
+                cover.setBackground(oval_bg(0xFF8CAAFF))
             cover.setScaleType(ImageView.ScaleType.CENTER_CROP)
             cover_wrap.addView(cover, FrameLayout.LayoutParams(inner, inner, Gravity.CENTER))
             st["cover"] = cover
@@ -2123,7 +2130,7 @@ class BubbleGlassPlugin(BasePlugin):
             title_row = LinearLayout(ctx)
             title_row.setOrientation(LinearLayout.HORIZONTAL)
             title_row.setGravity(Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL)
-            song = tv("未在播放", 20, 0xFFFFFFFF, bold=True)
+            song = tv("未在播放", fs(0.062), 0xFFFFFFFF, bold=True)
             song.setMaxLines(1)
             song.setEllipsize(TextUtils.TruncateAt.END)
             title_row.addView(song)
@@ -2135,7 +2142,7 @@ class BubbleGlassPlugin(BasePlugin):
             sq.setTypeface(Typeface.DEFAULT_BOLD)
             sq_bg = GradientDrawable()
             sq_bg.setCornerRadius(dp(4))
-            sq_bg.setColor(_signed(0xFF64B5F6))
+            sq_bg.setColor(_signed(0xFF8CAAFF))
             sq.setBackground(sq_bg)
             sq.setPadding(dp(4), dp(1), dp(4), dp(1))
             sq_lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -2148,7 +2155,7 @@ class BubbleGlassPlugin(BasePlugin):
             artist_row = LinearLayout(ctx)
             artist_row.setOrientation(LinearLayout.HORIZONTAL)
             artist_row.setGravity(Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL)
-            artist = tv("", 14, 0xCCFFFFFF)
+            artist = tv("", fs(0.038), 0xFFE8ECFF)
             artist.setMaxLines(1)
             artist.setEllipsize(TextUtils.TruncateAt.END)
             artist_row.addView(artist)
@@ -2158,7 +2165,7 @@ class BubbleGlassPlugin(BasePlugin):
             album_row = LinearLayout(ctx)
             album_row.setOrientation(LinearLayout.HORIZONTAL)
             album_row.setGravity(Gravity.CENTER_VERTICAL | Gravity.CENTER_HORIZONTAL)
-            album = tv("未知专辑", 13, 0x99FFFFFF)
+            album = tv("未知专辑", fs(0.031), 0xFFB9C2E8)
             album.setMaxLines(1)
             album.setEllipsize(TextUtils.TruncateAt.END)
             album_row.addView(album)
@@ -2183,12 +2190,12 @@ class BubbleGlassPlugin(BasePlugin):
             times_row = LinearLayout(ctx)
             times_row.setOrientation(LinearLayout.HORIZONTAL)
             times_row.setGravity(Gravity.CENTER_VERTICAL)
-            time_cur = tv("0:00", 12, 0xAAFFFFFF)
+            time_cur = tv("0:00", fs(0.033), 0xFF8E97C4)
             time_cur.setGravity(Gravity.LEFT)
             times_row.addView(time_cur)
             spacer = View(ctx)
             times_row.addView(spacer, LinearLayout.LayoutParams(0, 1, 1.0))
-            time_dur = tv("0:00", 12, 0xAAFFFFFF)
+            time_dur = tv("0:00", fs(0.033), 0xFF8E97C4)
             time_dur.setGravity(Gravity.RIGHT)
             times_row.addView(time_dur)
             st["time_cur"] = time_cur
@@ -2210,14 +2217,14 @@ class BubbleGlassPlugin(BasePlugin):
             ctrl.addView(btn_prev)
 
             play_wrap = FrameLayout(ctx)
-            pw_wrap = dp(60)
-            pw_circle = dp(48)
+            pw_wrap = int(disp_w * 0.152)
+            pw_circle = int(pw_wrap * 0.80)
             play_wrap.setLayoutParams(LinearLayout.LayoutParams(pw_wrap, pw_wrap))
             pglow = View(ctx)
-            pglow.setBackground(oval_bg(0x554FC3F7))
+            pglow.setBackground(oval_bg(0x738CAAFF))
             play_wrap.addView(pglow, FrameLayout.LayoutParams(pw_wrap, pw_wrap, Gravity.CENTER))
             pbg = View(ctx)
-            pbg.setBackground(oval_bg(0xFF5B8CFF, stroke_w=3, stroke_color=0xFF9CC2FF))
+            pbg.setBackground(oval_bg(0xFF8CAAFF, stroke_w=3, stroke_color=0xFFB9C2E8))
             play_wrap.addView(pbg, FrameLayout.LayoutParams(pw_circle, pw_circle, Gravity.CENTER))
             pbmp = icon_bitmap("play")
             st["play_bmp"] = pbmp
@@ -2400,8 +2407,8 @@ class BubbleGlassPlugin(BasePlugin):
             card.setGravity(Gravity.CENTER_VERTICAL)
             card_bg = GradientDrawable()
             card_bg.setCornerRadius(dp(18))
-            card_bg.setColor(_signed(0x33FFFFFF))
-            card_bg.setStroke(dp(1), _signed(0x22FFFFFF))
+            card_bg.setColor(_signed(0x1FFFFFFF))
+            card_bg.setStroke(dp(1), _signed(0x1AFFFFFF))
             card.setBackground(card_bg)
             card.setPadding(dp(10), dp(8), dp(10), dp(8))
             card_lp = LinearLayout.LayoutParams(
@@ -2414,7 +2421,7 @@ class BubbleGlassPlugin(BasePlugin):
             card_play.setOnClickListener(OnClickListener(lambda v: self._player_toggle()))
             card.addView(card_play)
 
-            card_playing = tv("当前播放", 12, 0xEEFFFFFF)
+            card_playing = tv("当前播放", 12, 0xFF8E97C4)
             cp_lp = LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.WRAP_CONTENT,
                 LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -2433,7 +2440,7 @@ class BubbleGlassPlugin(BasePlugin):
                     pass
                 card_art.setImageBitmap(card_bmp)
             else:
-                card_art.setBackground(oval_bg(0xFF7C4DFF))
+                card_art.setBackground(oval_bg(0xFF8CAAFF))
             ca_lp = LinearLayout.LayoutParams(card_art_size, card_art_size)
             ca_lp.setMargins(dp(10), 0, 0, 0)
             card.addView(card_art, ca_lp)
@@ -2470,7 +2477,7 @@ class BubbleGlassPlugin(BasePlugin):
             card_title_row.addView(csq, csq_lp)
             st["card_song"] = card_song
 
-            card_artist = tv("", 12, 0xCCFFFFFF)
+            card_artist = tv("", 12, 0xFFE8ECFF)
             card_artist.setMaxLines(1)
             card_artist.setEllipsize(TextUtils.TruncateAt.END)
             ca2_lp = LinearLayout.LayoutParams(
